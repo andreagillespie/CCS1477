@@ -3,11 +3,9 @@ Scripts for analysis conducted in CCS1477 project which led in the Sinclair er a
 
 Experiments included in this repo are:
 
-baseEditor_240529:
+ChIP_241008: chips for P300, INO80 & HA (INO80E) in UCHL5 & INO80E mut cells treated w/ CCS or DMSO, n=3.
 
-ChIP_241008:
-
-ChIP_250415:
+ChIP_250415: These chips were initially processed by C
 
 ChIP_250612:
 
