@@ -1,0 +1,290 @@
+---
+title: "RNAseq_241212"
+author: "Andrea"
+date: "2024-12-18"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+Project directory: /dawson_genomics/Projects/CCS1477/RNAseq_241212
+
+fastq dir: /pipeline/Runs/NextSeq/241212_VH01624_219_AACMMVJHV/ProjectFolders/Project_Oliver-Sinclair/Sample_*/
+
+```{bash}
+mkdir scripts
+mkdir fastqc
+mkdir trimmed_fastqs
+mkdir bams
+mkdir counts
+mkdir tdfs
+mkdir logs
+mkdir fastq_screen
+
+for fq in /pipeline/Runs/NextSeq/241212_VH01624_219_AACMMVJHV/ProjectFolders/Project_Oliver-Sinclair/Sample_*/*_R1_001.fastq.gz
+do
+sbatch scripts/align_star.sbatch $fq 
+done
+
+# run multiqc 
+module load multiqc/1.8
+multiqc .
+```
+
+# make dirs
+```{bash}
+mkdir session-info
+mkdir results
+mkdir plots
+```
+
+# load libraries
+```{r, eval=TRUE}
+library(data.table)
+library(RColorBrewer)
+library(edgeR)
+library(qvalue)
+library(ggplot2)
+library(ComplexHeatmap)
+```
+
+# set up dirs
+```{r}
+project.dir <- "/dawson_genomics/Projects/CCS1477/RNAseq_241212"
+counts.dir <- file.path(project.dir, "counts")
+session.dir <- file.path(project.dir, "session-info")
+bam.dir <- file.path(project.dir, "bams")
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# load into edger and filter low counts
+```{r}
+# get a list of all count files
+files <- list.files(counts.dir)
+# simplify names to use as sample names
+snames <- gsub(".count", "", files)
+
+# make sample annotation 
+sample.ann <- data.frame(
+  "files" = files, 
+  "samples" = snames, 
+  "treatment" = c(rep("CCS", 6), rep("DMSO", 6)),
+  "dTAG" = c(rep(c(rep("NEG", 3), rep("POS", 3)), 2)),
+  "replicate" = rep(paste0("R", 1:3), 4)
+  )
+sample.ann$group <- paste(sample.ann$treatment, sample.ann$dTAG, sep = "_")
+
+dge.counts = readDGE(
+  file = sample.ann$files, 
+  path = counts.dir,
+  group = sample.ann$group
+  )
+
+# write out raw counts
+write.table(
+  dge.counts$counts,
+  file.path(res.dir, "raw_counts.txt"),
+  sep = "\t",
+  row.names = TRUE,
+  col.names = NA,
+  quote = FALSE
+  )
+
+# Filtering out genes with low counts & not useful
+noint <- rownames(dge.counts$counts) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")
+counts.cpms <- cpm(dge.counts$counts)
+keep <- rowSums(counts.cpms > 1 ) >= 3 & !noint
+table(keep)
+dge.counts$counts <- dge.counts$counts[keep, ]
+```
+keep
+FALSE  TRUE 
+42232 18447
+
+# calc TMM norm and write out file
+```{r}
+dge.counts <- calcNormFactors(dge.counts, method = "TMM")
+
+# multiply counts by norm factors
+counts.norm <- as.data.frame(dge.counts$counts %*% diag(dge.counts$samples$norm.factors))
+colnames(counts.norm) <- snames
+write.table(
+  counts.norm,
+  file.path(res.dir, "TMMnorm_counts.txt"),
+  sep = "\t",
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+  )
+```
+
+# add ann info
+```{r}
+dge.counts$samples$group = sample.ann$group
+dge.counts$samples$dTAG = sample.ann$dTAG
+dge.counts$samples$treatment = sample.ann$treatment
+dge.counts$samples$replicate = sample.ann$replicate
+dge.counts$samples$samples = sample.ann$samples
+```
+
+# MDS plot norm counts
+```{r}
+# Setting colours
+col.group <- as.factor(dge.counts$samples$group)
+levels(col.group) <- brewer.pal(nlevels(col.group), "Set1") 
+col.group <- as.character(col.group)
+
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$group), 
+  col = col.group
+  )
+dev.off()
+
+# also check w/dim 3
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts_dim2v3.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$group), 
+  dim.plot = c(2, 3),
+  col = col.group
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts_dim1v3.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$group), 
+  dim.plot = c(1, 3),
+  col = col.group
+  )
+dev.off()
+
+# colour by dTAG
+col.group <- as.factor(dge.counts$samples$dTAG)
+levels(col.group) <- brewer.pal(nlevels(col.group), "Set1") 
+col.group <- as.character(col.group)
+
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts_dTAG.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$group), 
+  col = col.group
+  )
+dev.off()
+
+# colour by treatment
+col.group <- as.factor(dge.counts$samples$treatment)
+levels(col.group) <- brewer.pal(nlevels(col.group), "Set1") 
+col.group <- as.character(col.group)
+
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts_treatment.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$group), 
+  col = col.group
+  )
+dev.off()
+
+# colour by replicate
+col.group <- as.factor(dge.counts$samples$replicate)
+levels(col.group) <- brewer.pal(nlevels(col.group), "Set1") 
+col.group <- as.character(col.group)
+
+pdf(file.path(plots.dir, "MDS_TMM_norm_counts_replicate.pdf"))
+MDS = plotMDS(
+  dge.counts,
+  labels = paste0(dge.counts$samples$samples), 
+  col = col.group
+  )
+dev.off()
+```
+
+
+# set design and contrasts for DE
+```{r}
+# design table
+design = model.matrix(~0+group, data = dge.counts$samples)
+colnames(design) <- gsub("group", "", colnames(design))
+design
+
+contr.matrix <- makeContrasts(
+  NEG_CCSvDMSO = CCS_NEG-DMSO_NEG,
+  POS_CCSvDMSO = CCS_POS-DMSO_POS,
+  CCS_POSvNEG = CCS_POS-CCS_NEG,
+  DMSO_POSvNEG = DMSO_POS-DMSO_NEG,
+  levels = colnames(design)
+  )
+contr.matrix
+```
+
+# estimate dispersion and get DE
+```{r}
+bm.ann <- fread("/data/reference/dawson_labs/biomart_annotations/Hsapiens/ensembl_hgnc_entrez.txt")
+
+dge.counts = estimateDisp(dge.counts, design)
+gfit <- glmQLFit(dge.counts, design)
+
+ftest.list <- list()
+
+for(con.i in 1:length(colnames(contr.matrix))){
+
+  ftest.list[[con.i]] <- glmQLFTest(gfit, contrast = contr.matrix[, con.i])
+  ftest.list[[con.i]]$table$ensg <- rownames(ftest.list[[con.i]]$table)
+  ftest.list[[con.i]]$table <- merge(ftest.list[[con.i]]$table, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+  # add qvalues to table, order by that and write out
+  qv <- qvalue(ftest.list[[con.i]]$table$PValue)
+  ftest.list[[con.i]]$table$QValue <- qv$qvalues
+  ftest.list[[con.i]]$table <- ftest.list[[con.i]]$table[order(ftest.list[[con.i]]$table$QValue, decreasing = FALSE),]
+  write.table(
+    ftest.list[[con.i]]$table,
+    file.path(res.dir, paste0(colnames(contr.matrix)[con.i], "_ftest_table.txt")),
+    sep = "\t",
+    quote = FALSE,
+    col.names = TRUE,
+    row.names = FALSE
+  )
+}
+names(ftest.list) <- colnames(contr.matrix)
+```
+
+# make a violin plot of LFCs
+```{r}
+# make df of LFCs for each comparison
+de.lfc <- data.frame(
+  "LFC" = c(
+    ftest.list[[1]]$table$logFC, 
+    ftest.list[[2]]$table$logFC, 
+    ftest.list[[3]]$table$logFC, 
+    ftest.list[[4]]$table$logFC
+    ),
+  "comp" = c(
+    rep(names(ftest.list)[[1]], nrow(ftest.list[[1]]$table)), 
+    rep(names(ftest.list)[[2]], nrow(ftest.list[[2]]$table)), 
+    rep(names(ftest.list)[[3]], nrow(ftest.list[[3]]$table)), 
+    rep(names(ftest.list)[[4]], nrow(ftest.list[[4]]$table))
+    )
+)
+
+pdf(file.path(plots.dir, "violin_DE_LFC.pdf"))
+ggplot(de.lfc, aes(x = comp, y = LFC, fill = comp)) +
+  geom_violin() +
+  ggtitle("LFC expression") +
+  ylim(-2, 2) +
+  theme_minimal()
+dev.off()
+```
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(session.dir, paste0(Sys.Date(), "_RNAseq_240411.txt"))
+)
+```
