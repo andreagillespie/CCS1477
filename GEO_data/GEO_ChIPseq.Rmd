@@ -1,0 +1,129 @@
+---
+title: "GEO_ChIPseq"
+author: "Andrea"
+date: "2023/11/13"
+output: html_document
+---
+
+fastq location: /dawson_genomics/Projects/CCS1477/GEO_data/fastqs
+project directory: /dawson_genomics/Projects/CCS1477/GEO_data
+
+# set up project dir and process (fastqc, trim, align, tdfs)
+```{bash}
+mkdir alignment
+mkdir fastqc
+mkdir trimmed_fastqs
+mkdir logs
+mkdir scripts
+mkdir tdfs
+
+for fq in /dawson_genomics/Projects/CCS1477/GEO_data/fastqs/[C-I]*fastq.gz
+do
+sbatch scripts/alignHg38_SE.sbatch $fq 
+done
+
+for fq in /dawson_genomics/Projects/CCS1477/GEO_data/fastqs/A375-A*_1.fastq.gz
+do
+sname=`basename $fq _1.fastq.gz`
+dname=`dirname $fq`
+sbatch scripts/alignHg38_PE.sbatch $fq ${dname}/${sname}_2.fastq.gz
+done
+
+module load multiqc/1.8
+multiqc .
+```
+
+# peak calling (both narrow and broad) include bedgraph output 
+```{bash}
+mkdir macs/narrowpeaks
+mkdir macs/broadpeaks
+
+sbatch scripts/macs2.sbatch alignment/ChIP_A375_WT_H3K4me3_rep1.sort.rmdup.bam alignment/ChIP_A375_WT_Input.sort.rmdup.bam
+sbatch scripts/macs2.sbatch alignment/ChIP_A375_WT_H3K4me3_rep2.sort.rmdup.bam alignment/ChIP_A375_WT_Input.sort.rmdup.bam
+
+sbatch scripts/macs2.sbatch alignment/HEXIM_ChIP_DMSO.sort.rmdup.bam alignment/Input_ChIP_DMSO_SRX535451.sort.rmdup.bam
+
+sbatch scripts/macs2.sbatch alignment/A375-A-H3K27me3.sort.rmdup.bam alignment/A375-A-Input-H3K27me3.sort.rmdup.bam
+```
+
+# combine reps for H3K4me3
+```{bash}
+module load macs/2.2.7.1
+
+macs2 cmbreps -i macs/broadpeaks/ChIP_A375_WT_H3K4me3_rep1_treat_pileup.bdg macs/broadpeaks/ChIP_A375_WT_H3K4me3_rep2_treat_pileup.bdg -o macs/broadpeaks/ChIP_A375_WT_H3K4me3_comb.bdg --method mean
+```
+
+
+# get bivalent genes, defined as in Christina's paper, TSS+/-2k; annotate peaks and find genes with both
+```{r}
+library(data.table)
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+k4.r1.peaks <- fread("macs/broadpeaks/ChIP_A375_WT_H3K4me3_rep1_peaks.broadPeak")
+# make genomic ranges objects and annotate
+k4.r1.gr <- with(k4.r1.peaks, GRanges(V1, IRanges(start = V2, end = V3)))
+seqlevelsStyle(k4.r1.gr) <- "UCSC"
+k4.r1.ann <- annotatePeak(k4.r1.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+k4.r1.ann.table <- as.data.frame(k4.r1.ann)
+
+k4.r2.peaks <- fread("macs/broadpeaks/ChIP_A375_WT_H3K4me3_rep2_peaks.broadPeak")
+# make genomic ranges objects and annotate
+k4.r2.gr <- with(k4.r2.peaks, GRanges(V1, IRanges(start = V2, end = V3)))
+seqlevelsStyle(k4.r2.gr) <- "UCSC"
+k4.r2.ann <- annotatePeak(k4.r2.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+k4.r2.ann.table <- as.data.frame(k4.r2.ann)
+
+k27.peaks <- fread("macs/broadpeaks/A375-A-H3K27me3_peaks.broadPeak")
+k27.gr <- with(k27.peaks, GRanges(V1, IRanges(start = V2, end = V3)))
+seqlevelsStyle(k27.gr) <- "UCSC"
+k27.ann <- annotatePeak(k27.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+k27.ann.table <- as.data.frame(k27.ann)
+
+# find gene with at least 1 peak in each sample w/in 2k of TSS (stringent in that it has to be in both k4 reps, but lax in that the peaks can be anywhere in the 4kb range rather than overlapping)
+k4.genes <- intersect(
+  unique(k4.r1.ann.table[abs(k4.r1.ann.table$distanceToTSS) <= 2000, "SYMBOL"]),
+  unique(k4.r2.ann.table[abs(k4.r2.ann.table$distanceToTSS) <= 2000, "SYMBOL"])
+)
+
+bi.genes <- intersect(
+  k4.genes,
+  unique(k27.ann.table[abs(k27.ann.table$distanceToTSS) <= 2000, "SYMBOL"])
+  )
+
+# find overlap between HEXIM and bivalent genes
+hexim.peaks <- fread("macs/broadpeaks/HEXIM_ChIP_DMSO_peaks.broadPeak")
+
+hexim.gr <- with(hexim.peaks, GRanges(V1, IRanges(start = V2, end = V3)))
+seqlevelsStyle(hexim.gr) <- "UCSC"
+hexim.ann <- annotatePeak(hexim.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+hexim.ann.table <- as.data.frame(hexim.ann)
+
+hex.bi.genes <- intersect(
+  bi.genes,
+  unique(hexim.ann.table[abs(hexim.ann.table$distanceToTSS) <= 2000, "SYMBOL"])
+  )
+
+# write out list of HEXIM bivalent genes
+write.table(
+  hex.bi.genes,
+  "HEXIM_bivalent_genes_A375.txt",
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path("session-info", paste0(Sys.Date(), "_GEO_ChIPseq.txt"))
+)
+```
