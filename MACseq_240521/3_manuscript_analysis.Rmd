@@ -1,0 +1,273 @@
+---
+title: "3_manuscript_analysis"
+author: "Andrea"
+date: "2025-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+This script is picking up with new analysis needed for the manuscript
+
+# init R env
+```{r}
+library(data.table)
+library(tidyverse)
+library(RColorBrewer)
+library(ComplexHeatmap)
+library(dplyr)
+library(ggplot2)
+library(edgeR)
+library(DESeq2)
+```
+
+# set paths and load data
+```{r}
+project.dir <- "/dawson_genomics/Projects/CCS1477/MACseq_240521"
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+
+load(file.path(project.dir, ".RData"))
+```
+
+# get DEGs for 24hr in each steady state KO condition and each CCS KO condition
+# that are found in at least 2 of the KOs. Overlap these to have 3 groups: DMSO
+# only, CCS only and synergistic then make a heatmap over the 3 groups. Do for 
+# both cell lines separately
+
+# start by loading all the DEG results and compiling KOs together
+```{r}
+# get files then load all into a list
+ftest.files <- list.files(res.dir, pattern = "*_DMSO_24hrvsSafe_ftest_table.txt")
+
+ftest.list <- list()
+
+for(file.i in 1:length(ftest.files)){
+  ftest.list[[file.i]] <- fread(file.path(res.dir, ftest.files[[file.i]]))
+}
+names(ftest.list) <- gsub("_DMSO_24hrvsSafe_ftest_table.txt", "", ftest.files)
+
+# merge each cell line's qvalues into a single table
+molm13.qval <- ftest.list$MV411_INO80[, c(1, 6, 8)]
+colnames(molm13.qval)[3] <- "MV411_INO80_QValue"
+for(mq.i in 2:4){
+  molm13.qval <- merge(molm13.qval, ftest.list[[mq.i]][, c(1, 6, 8)])
+  colnames(molm13.qval)[mq.i + 2] <- paste0(names(ftest.list)[mq.i], "_QValue")
+}
+
+opm2.qval <- ftest.list$OPM2_INO80[, c(1, 6, 8)]
+colnames(opm2.qval)[3] <- "OPM2_INO80_QValue"
+for(oq.i in 6:8){
+  opm2.qval <- merge(opm2.qval, ftest.list[[oq.i]][, c(1, 6, 8)])
+  colnames(opm2.qval)[oq.i - 2] <- paste0(names(ftest.list)[oq.i], "_QValue")
+}
+
+# remove duplicates
+molm13.qval <- molm13.qval[-which(duplicated(molm13.qval)), ]
+opm2.qval <- opm2.qval[-which(duplicated(opm2.qval)), ]
+
+# limit to those w/ sig qvals in at least 2 KOs
+molm13.qval <- molm13.qval[which(rowSums(molm13.qval[, 3:6] < 0.05) >= 2), ]
+opm2.qval <- opm2.qval[which(rowSums(opm2.qval[, 3:6] < 0.05) >= 2), ]
+
+# now the same for CCS
+# get files then load all into a list
+ccs.ftest.files <- list.files(res.dir, pattern = "*_CCS_24hrvsSafe_ftest_table.txt")
+
+ccs.ftest.list <- list()
+
+for(file.i in 1:length(ccs.ftest.files)){
+  ccs.ftest.list[[file.i]] <- fread(file.path(res.dir, ccs.ftest.files[[file.i]]))
+}
+names(ccs.ftest.list) <- gsub("_CCS_24hrvsSafe_ftest_table.txt", "", ccs.ftest.files)
+
+# merge each cell line's qvalues into a single table
+cm.qval <- ftest.list$MV411_INO80[, c(1, 6, 8)]
+colnames(cm.qval)[3] <- "MV411_INO80_QValue"
+for(mq.i in 2:4){
+  cm.qval <- merge(cm.qval, ccs.ftest.list[[mq.i]][, c(1, 6, 8)])
+  colnames(cm.qval)[mq.i + 2] <- paste0(names(ccs.ftest.list)[mq.i], "_QValue")
+}
+
+co.qval <- ftest.list$OPM2_INO80[, c(1, 6, 8)]
+colnames(co.qval)[3] <- "OPM2_INO80_QValue"
+for(oq.i in 6:8){
+  co.qval <- merge(co.qval, ccs.ftest.list[[oq.i]][, c(1, 6, 8)])
+  colnames(co.qval)[oq.i - 2] <- paste0(names(ccs.ftest.list)[oq.i], "_QValue")
+}
+
+# remove duplicates
+cm.qval <- cm.qval[-which(duplicated(cm.qval)), ]
+co.qval <- co.qval[-which(duplicated(co.qval)), ]
+
+# limit to those w/ sig qvals in at least 2 KOs
+cm.qval <- cm.qval[which(rowSums(cm.qval[, 3:6] < 0.05) >= 2), ]
+co.qval <- co.qval[which(rowSums(co.qval[, 3:6] < 0.05) >= 2), ]
+```
+
+# get lists of genes by group (DMSO only, CCS only, both)
+```{r}
+# MOLM13
+m.both.genes <- intersect(molm13.qval$hgnc_symbol, cm.qval$hgnc_symbol)
+md.only.genes <- molm13.qval$hgnc_symbol[-which(molm13.qval$hgnc_symbol %in% m.both.genes)]
+mc.only.genes <- cm.qval$hgnc_symbol[-which(cm.qval$hgnc_symbol %in% m.both.genes)]
+m.all.groups <- c(md.only.genes, m.both.genes, mc.only.genes)
+
+# OPM2
+o.both.genes <- intersect(opm2.qval$hgnc_symbol, co.qval$hgnc_symbol)
+od.only.genes <- opm2.qval$hgnc_symbol[-which(opm2.qval$hgnc_symbol %in% o.both.genes)]
+oc.only.genes <- co.qval$hgnc_symbol[-which(co.qval$hgnc_symbol %in% o.both.genes)]
+o.all.groups <- c(od.only.genes, o.both.genes, oc.only.genes)
+```
+
+# make heatmaps on merged reps
+```{r}
+# MOLM13
+m24.samples <- which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "24hr")
+
+m24.heat <- dge$counts[which(dge$genes$Symbol %in% m.all.groups), m24.samples]
+
+# normalise by TMMs
+m24.heat <- m24.heat * dge$samples[m24.samples, "norm.factors"]
+
+m24.heat.merged <- as.matrix(data.frame(
+  "MV411_Safe_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_Safe_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_Safe_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_Safe_CCS_24hr", colnames(m24.heat))]),
+  "MV411_UCHL5_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_UCHL5_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_UCHL5_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_UCHL5_CCS_24hr", colnames(m24.heat))]),
+  "MV411_TFPT_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_TFPT_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_TFPT_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_TFPT_CCS_24hr", colnames(m24.heat))]),
+  "MV411_INO80E_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80E_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80E_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80E_CCS_24hr", colnames(m24.heat))]),
+  "MV411_INO80_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80_CCS_24hr", colnames(m24.heat))])
+))
+# label w/ symbols instead of ensg
+rownames(m24.heat.merged) <- dge$genes[rownames(m24.heat), "Symbol"]
+
+# z-score
+m24.heat.merged <- t(scale(t(m24.heat.merged)))
+
+# add group annotation
+m.deg.group <- ifelse(
+  rownames(m24.heat.merged) %in% m.both.genes, 
+  "Synergystic", 
+  ifelse(rownames(m24.heat.merged) %in% mc.only.genes, "CCSonly", "DMSOonly")
+  )
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_2sample_DEGs.pdf"))
+Heatmap(
+  m24.heat.merged, 
+  name = "z-score(TMM)", 
+  column_title = "MOLM13_24hr_DEGs_KOvWT", 
+  row_title_gp = gpar(fontsize = 6),
+  row_names_gp = gpar(fontsize = 4), 
+  column_names_gp = gpar(fontsize = 6),
+  cluster_columns = FALSE,
+  cluster_row_slices = FALSE,
+  row_split = factor(m.deg.group, levels = c("DMSOonly", "Synergystic", "CCSonly"))
+  )
+dev.off()
+
+# OPM2
+o24.samples <- which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "24hr")
+
+o24.heat <- dge$counts[which(dge$genes$Symbol %in% o.all.groups), o24.samples]
+
+# normalise by TMMs
+o24.heat <- o24.heat * dge$samples[o24.samples, "norm.factors"]
+
+o24.heat.merged <- as.matrix(data.frame(
+  "OPM2_Safe_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_Safe_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_Safe_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_Safe_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_UCHL5_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_UCHL5_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_UCHL5_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_UCHL5_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_TFPT_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_TFPT_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_TFPT_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_TFPT_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_INO80E_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80E_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80E_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80E_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_INO80_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80_CCS_24hr", colnames(o24.heat))])
+))
+# label w/ symbols instead of ensg
+rownames(o24.heat.merged) <- dge$genes[rownames(o24.heat), "Symbol"]
+
+# z-score
+o24.heat.merged <- t(scale(t(o24.heat.merged)))
+
+# add group annotation
+o.deg.group <- ifelse(
+  rownames(o24.heat.merged) %in% o.both.genes, 
+  "Synergystic", 
+  ifelse(rownames(o24.heat.merged) %in% oc.only.genes, "CCSonly", "DMSOonly")
+  )
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_2sample_DEGs.pdf"))
+Heatmap(
+  o24.heat.merged, 
+  name = "z-score(TMM)", 
+  column_title = "OPM2_24hr_DEGs_KOvWT", 
+  row_title_gp = gpar(fontsize = 6),
+  row_names_gp = gpar(fontsize = 4), 
+  column_names_gp = gpar(fontsize = 6),
+  cluster_columns = FALSE,
+  cluster_row_slices = FALSE,
+  row_split = factor(o.deg.group, levels = c("DMSOonly", "Synergystic", "CCSonly"))
+  )
+dev.off()
+```
+
+# reorder columns and add splits in cols
+```{r}
+# order with DMSO KOs and CCS KOs next to one another
+m24.heat.merged <- m24.heat.merged[, c(1:3, 5, 7, 9, 4, 6, 8, 10)]
+
+# add group annotation
+m.col.group <- c(rep("safe", 2), rep("KO_DMSO", 4), rep("KO_CCS", 4))
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_2sample_DEGs.pdf"))
+Heatmap(
+  m24.heat.merged, 
+  name = "z-score(TMM)", 
+  column_title = "MOLM13_24hr_DEGs_KOvWT", 
+  row_title_gp = gpar(fontsize = 6),
+  row_names_gp = gpar(fontsize = 4), 
+  column_names_gp = gpar(fontsize = 6),
+  cluster_columns = FALSE,
+  cluster_row_slices = FALSE,
+  row_split = factor(m.deg.group, levels = c("DMSOonly", "Synergystic", "CCSonly")),
+  column_split = factor(m.col.group, levels = c("safe", "KO_DMSO", "KO_CCS"))
+  )
+dev.off()
+
+# order with DMSO KOs and CCS KOs next to one another
+o24.heat.merged <- o24.heat.merged[, c(1:3, 5, 7, 9, 4, 6, 8, 10)]
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_2sample_DEGs.pdf"))
+Heatmap(
+  o24.heat.merged, 
+  name = "z-score(TMM)", 
+  column_title = "OPM2_24hr_DEGs_KOvWT", 
+  row_title_gp = gpar(fontsize = 6),
+  row_names_gp = gpar(fontsize = 4), 
+  column_names_gp = gpar(fontsize = 6),
+  cluster_columns = FALSE,
+  cluster_row_slices = FALSE,
+  row_split = factor(o.deg.group, levels = c("DMSOonly", "Synergystic", "CCSonly")),
+  column_split = factor(m.col.group, levels = c("safe", "KO_DMSO", "KO_CCS"))
+  )
+dev.off()
+```
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_MACseq_240521.txt"))
+)
+```

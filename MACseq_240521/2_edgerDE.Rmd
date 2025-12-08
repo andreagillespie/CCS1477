@@ -1,0 +1,2141 @@
+---
+title: "2_edgerDE.Rmd"
+author: "Andrea"
+date: "2024-06-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+fastq dir: /pipeline/Runs/NextSeq/240521_VH01624_101_AACJ7K3HV/ProjectFolders/Project_Xin-Liu/Sample_OS-7002-Plate/
+project dir: /dawson_genomics/Projects/CCS1477/MACseq_240521
+
+# init R env
+```{r}
+library(Matrix)
+library(readr)
+library(data.table)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+library(qvalue)
+library(enrichR)
+library(VennDiagram)
+library(DESeq2)
+library(ComplexHeatmap)
+library(dplyr)
+library(ggplot2)
+```
+
+# set paths
+```{r}
+project.dir <- "/dawson_genomics/Projects/CCS1477/MACseq_240521"
+ref.dir <- file.path(project.dir, "reference_files")
+align.dir <- file.path(project.dir, "alignment")
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# rename columns in count matrix w/sample names
+```{r}
+colnames(dge$counts) <- dge$samples$Sample_Name
+rownames(dge$samples) <- dge$samples$Sample_Name
+```
+
+# set design and contrasts for DE
+```{r}
+# design table
+design = model.matrix(~0+group, data = dge$samples)
+colnames(design) <- gsub("group", "", colnames(design))
+design
+
+contr.matrix <- makeContrasts(
+  MV411_INO80_CCS_6hrvsDMSO = MV411_INO80_CCS_6hr-MV411_INO80_DMSO_6hr,
+  MV411_INO80E_CCS_6hrvsDMSO = MV411_INO80E_CCS_6hr-MV411_INO80E_DMSO_6hr,
+  MV411_Safe_CCS_6hrvsDMSO = MV411_Safe_CCS_6hr-MV411_Safe_DMSO_6hr,
+  MV411_TFPT_CCS_6hrvsDMSO = MV411_TFPT_CCS_6hr-MV411_TFPT_DMSO_6hr,
+  MV411_UCHL5_CCS_6hrvsDMSO = MV411_UCHL5_CCS_6hr-MV411_UCHL5_DMSO_6hr,
+  OPM2_INO80_CCS_6hrvsDMSO = OPM2_INO80_CCS_6hr-OPM2_INO80_DMSO_6hr,
+  OPM2_INO80E_CCS_6hrvsDMSO = OPM2_INO80E_CCS_6hr-OPM2_INO80E_DMSO_6hr,
+  OPM2_Safe_CCS_6hrvsDMSO = OPM2_Safe_CCS_6hr-OPM2_Safe_DMSO_6hr,
+  OPM2_TFPT_CCS_6hrvsDMSO = OPM2_TFPT_CCS_6hr-OPM2_TFPT_DMSO_6hr,
+  OPM2_UCHL5_CCS_6hrvsDMSO = OPM2_UCHL5_CCS_6hr-OPM2_UCHL5_DMSO_6hr,
+  MV411_INO80_CCS_24hrvsDMSO = MV411_INO80_CCS_24hr-MV411_INO80_DMSO_24hr,
+  MV411_INO80E_CCS_24hrvsDMSO = MV411_INO80E_CCS_24hr-MV411_INO80E_DMSO_24hr,
+  MV411_Safe_CCS_24hrvsDMSO = MV411_Safe_CCS_24hr-MV411_Safe_DMSO_24hr,
+  MV411_TFPT_CCS_24hrvsDMSO = MV411_TFPT_CCS_24hr-MV411_TFPT_DMSO_24hr,
+  MV411_UCHL5_CCS_24hrvsDMSO = MV411_UCHL5_CCS_24hr-MV411_UCHL5_DMSO_24hr,
+  OPM2_INO80_CCS_24hrvsDMSO = OPM2_INO80_CCS_24hr-OPM2_INO80_DMSO_24hr,
+  OPM2_INO80E_CCS_24hrvsDMSO = OPM2_INO80E_CCS_24hr-OPM2_INO80E_DMSO_24hr,
+  OPM2_Safe_CCS_24hrvsDMSO = OPM2_Safe_CCS_24hr-OPM2_Safe_DMSO_24hr,
+  OPM2_TFPT_CCS_24hrvsDMSO = OPM2_TFPT_CCS_24hr-OPM2_TFPT_DMSO_24hr,
+  OPM2_UCHL5_CCS_24hrvsDMSO = OPM2_UCHL5_CCS_24hr-OPM2_UCHL5_DMSO_24hr,
+  MV411_INO80_CCS_24hrvsSafe = MV411_INO80_CCS_24hr-MV411_Safe_CCS_24hr,
+  MV411_INO80E_CCS_24hrvsSafe = MV411_INO80E_CCS_24hr-MV411_Safe_CCS_24hr,
+  MV411_TFPT_CCS_24hrvsSafe = MV411_TFPT_CCS_24hr-MV411_Safe_CCS_24hr,
+  MV411_UCHL5_CCS_24hrvsSafe = MV411_UCHL5_CCS_24hr-MV411_Safe_CCS_24hr,
+  MV411_INO80_CCS_6hrvsSafe = MV411_INO80_CCS_6hr-MV411_Safe_CCS_6hr,
+  MV411_INO80E_CCS_6hrvsSafe = MV411_INO80E_CCS_6hr-MV411_Safe_CCS_6hr,
+  MV411_TFPT_CCS_6hrvsSafe = MV411_TFPT_CCS_6hr-MV411_Safe_CCS_6hr,
+  MV411_UCHL5_CCS_6hrvsSafe = MV411_UCHL5_CCS_6hr-MV411_Safe_CCS_6hr,
+  MV411_INO80_DMSO_24hrvsSafe = MV411_INO80_DMSO_24hr-MV411_Safe_DMSO_24hr,
+  MV411_INO80E_DMSO_24hrvsSafe = MV411_INO80E_DMSO_24hr-MV411_Safe_DMSO_24hr,
+  MV411_TFPT_DMSO_24hrvsSafe = MV411_TFPT_DMSO_24hr-MV411_Safe_DMSO_24hr,
+  MV411_UCHL5_DMSO_24hrvsSafe = MV411_UCHL5_DMSO_24hr-MV411_Safe_DMSO_24hr,
+  MV411_INO80_DMSO_6hrvsSafe = MV411_INO80_DMSO_6hr-MV411_Safe_DMSO_6hr,
+  MV411_INO80E_DMSO_6hrvsSafe = MV411_INO80E_DMSO_6hr-MV411_Safe_DMSO_6hr,
+  MV411_TFPT_DMSO_6hrvsSafe = MV411_TFPT_DMSO_6hr-MV411_Safe_DMSO_6hr,
+  MV411_UCHL5_DMSO_6hrvsSafe = MV411_UCHL5_DMSO_6hr-MV411_Safe_DMSO_6hr,
+  OPM2_INO80_CCS_24hrvsSafe = OPM2_INO80_CCS_24hr-OPM2_Safe_CCS_24hr,
+  OPM2_INO80E_CCS_24hrvsSafe = OPM2_INO80E_CCS_24hr-OPM2_Safe_CCS_24hr,
+  OPM2_TFPT_CCS_24hrvsSafe = OPM2_TFPT_CCS_24hr-OPM2_Safe_CCS_24hr,
+  OPM2_UCHL5_CCS_24hrvsSafe = OPM2_UCHL5_CCS_24hr-OPM2_Safe_CCS_24hr,
+  OPM2_INO80_CCS_6hrvsSafe = OPM2_INO80_CCS_6hr-OPM2_Safe_CCS_6hr,
+  OPM2_INO80E_CCS_6hrvsSafe = OPM2_INO80E_CCS_6hr-OPM2_Safe_CCS_6hr,
+  OPM2_TFPT_CCS_6hrvsSafe = OPM2_TFPT_CCS_6hr-OPM2_Safe_CCS_6hr,
+  OPM2_UCHL5_CCS_6hrvsSafe = OPM2_UCHL5_CCS_6hr-OPM2_Safe_CCS_6hr,
+  OPM2_INO80_DMSO_24hrvsSafe = OPM2_INO80_DMSO_24hr-OPM2_Safe_DMSO_24hr,
+  OPM2_INO80E_DMSO_24hrvsSafe = OPM2_INO80E_DMSO_24hr-OPM2_Safe_DMSO_24hr,
+  OPM2_TFPT_DMSO_24hrvsSafe = OPM2_TFPT_DMSO_24hr-OPM2_Safe_DMSO_24hr,
+  OPM2_UCHL5_DMSO_24hrvsSafe = OPM2_UCHL5_DMSO_24hr-OPM2_Safe_DMSO_24hr,
+  OPM2_INO80_DMSO_6hrvsSafe = OPM2_INO80_DMSO_6hr-OPM2_Safe_DMSO_6hr,
+  OPM2_INO80E_DMSO_6hrvsSafe = OPM2_INO80E_DMSO_6hr-OPM2_Safe_DMSO_6hr,
+  OPM2_TFPT_DMSO_6hrvsSafe = OPM2_TFPT_DMSO_6hr-OPM2_Safe_DMSO_6hr,
+  OPM2_UCHL5_DMSO_6hrvsSafe = OPM2_UCHL5_DMSO_6hr-OPM2_Safe_DMSO_6hr,
+  levels = colnames(design)
+  )
+contr.matrix
+```
+
+# estimate dispersion and get DE
+```{r}
+bm.ann <- fread("/data/reference/dawson_labs/biomart_annotations/Hsapiens/ensembl_hgnc_entrez.txt")
+
+dge = estimateDisp(dge, design)
+gfit = glmQLFit(dge, design)
+
+ftest.list <- list()
+
+for(con.i in 1:length(colnames(contr.matrix))){
+
+  ftest.list[[con.i]] <- glmQLFTest(gfit, contrast = contr.matrix[, con.i])
+  ftest.list[[con.i]]$table$ensg <- rownames(ftest.list[[con.i]]$table)
+  ftest.list[[con.i]]$table <- merge(ftest.list[[con.i]]$table, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+  # add qvalues to table, order by that and write out
+  qv <- qvalue(ftest.list[[con.i]]$table$PValue)
+  ftest.list[[con.i]]$table$QValue <- qv$qvalues
+  ftest.list[[con.i]]$table <- ftest.list[[con.i]]$table[order(ftest.list[[con.i]]$table$QValue, decreasing = FALSE), ]
+  write.table(
+    ftest.list[[con.i]]$table,
+    file.path(res.dir, paste0(colnames(contr.matrix)[con.i], "_ftest_table.txt")),
+    sep = "\t",
+    quote = FALSE,
+    col.names = TRUE,
+    row.names = FALSE
+  )
+}
+names(ftest.list) <- colnames(contr.matrix)
+```
+
+# Find genes commonly DE between all KOs, not DE in safe (for each cell line and timepoint)
+```{r}
+# get all genes sig DEGs common in all KOs for each cell line & time
+m6.ko.deg <- Reduce(intersect, list(
+  ftest.list$MV411_INO80_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table$QValue < 0.05)]
+))
+
+o6.ko.deg <- Reduce(intersect, list(
+  ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table$QValue < 0.05)]
+)) 
+
+m24.ko.deg <- Reduce(intersect, list(
+  ftest.list$MV411_INO80_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table$QValue < 0.05)]
+))
+
+o24.ko.deg <- Reduce(intersect, list(
+  ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table$QValue < 0.05)]
+))
+
+# get all DEGs in safe comps for each group
+m6.safe.deg <- ftest.list$MV411_Safe_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_Safe_CCS_6hrvsDMSO$table$QValue < 0.05)]
+o6.safe.deg <- ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table$QValue < 0.05)]
+m24.safe.deg <- ftest.list$MV411_Safe_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_Safe_CCS_24hrvsDMSO$table$QValue < 0.05)]
+o24.safe.deg <- ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table$QValue < 0.05)]
+
+# remove safe DEGs from KO DEGs lists
+m6.ko.deg <- m6.ko.deg[-which(m6.ko.deg %in% m6.safe.deg)]
+o6.ko.deg <- o6.ko.deg[-which(o6.ko.deg %in% o6.safe.deg)]
+m24.ko.deg <- m24.ko.deg[-which(m24.ko.deg %in% m24.safe.deg)]
+o24.ko.deg <- o24.ko.deg[-which(o24.ko.deg %in% o24.safe.deg)]
+
+# write out each DEG list
+writeLines(
+  m6.ko.deg,
+  file.path(res.dir, "MV411_6hr_allKO_CCSvDMSO_DEGs.txt")
+)
+writeLines(
+  o6.ko.deg,
+  file.path(res.dir, "OPM2_6hr_allKO_CCSvDMSO_DEGs.txt")
+)
+writeLines(
+  m24.ko.deg,
+  file.path(res.dir, "MV411_24hr_allKO_CCSvDMSO_DEGs.txt")
+)
+writeLines(
+  o24.ko.deg,
+  file.path(res.dir, "OPM2_24hr_allKO_CCSvDMSO_DEGs.txt")
+)
+```
+
+# do GSEA for gene lists
+```{r}
+dbs <- c(
+  "GO_Molecular_Function_2023", 
+  "GO_Biological_Process_2023",
+  "Reactome_2022",
+  "MSigDB_Hallmark_2020", 
+  "KEGG_2021_Human", 
+  "NCI-Nature_2016", 
+  "WikiPathway_2023_Human", 
+  "RNAseq_Automatic_GEO_Signatures_Human_Up", 
+  "RNAseq_Automatic_GEO_Signatures_Human_Down"
+  )
+
+# make list of DEG lists to loop through
+#deg.list <- list(m6.ko.deg, o6.ko.deg, m24.ko.deg, o24.ko.deg)
+#deg.names <- c("MV411_6hr", "OPM2_6hr", "MV411_24hr", "OPM2_24hr")
+
+
+sig.enrich <- enrichr(m6.ko.deg, dbs)
+pdf(file.path(plots.dir, "MV411_6hr_allKO_CCSvDMSO_DEGs_enrichR_plots.pdf"), height = 8, width = 10)
+plotEnrich(sig.enrich[[1]], numChar = 65, title = names(sig.enrich)[[1]])
+plotEnrich(sig.enrich[[2]], numChar = 65, title = names(sig.enrich)[[2]])
+plotEnrich(sig.enrich[[3]], numChar = 65, title = names(sig.enrich)[[3]])
+plotEnrich(sig.enrich[[4]], numChar = 65, title = names(sig.enrich)[[4]])
+plotEnrich(sig.enrich[[5]], numChar = 65, title = names(sig.enrich)[[5]])
+plotEnrich(sig.enrich[[6]], numChar = 65, title = names(sig.enrich)[[6]])
+plotEnrich(sig.enrich[[7]], numChar = 65, title = names(sig.enrich)[[7]])
+plotEnrich(sig.enrich[[8]], numChar = 65, title = names(sig.enrich)[[8]])
+plotEnrich(sig.enrich[[9]], numChar = 65, title = names(sig.enrich)[[9]])
+dev.off()
+
+sig.enrich <- enrichr(o6.ko.deg, dbs)
+pdf(file.path(plots.dir, "OPM2_6hr_allKO_CCSvDMSO_DEGs_enrichR_plots.pdf"), height = 8, width = 10)
+plotEnrich(sig.enrich[[1]], numChar = 65, title = names(sig.enrich)[[1]])
+plotEnrich(sig.enrich[[2]], numChar = 65, title = names(sig.enrich)[[2]])
+plotEnrich(sig.enrich[[3]], numChar = 65, title = names(sig.enrich)[[3]])
+plotEnrich(sig.enrich[[4]], numChar = 65, title = names(sig.enrich)[[4]])
+plotEnrich(sig.enrich[[5]], numChar = 65, title = names(sig.enrich)[[5]])
+plotEnrich(sig.enrich[[6]], numChar = 65, title = names(sig.enrich)[[6]])
+plotEnrich(sig.enrich[[7]], numChar = 65, title = names(sig.enrich)[[7]])
+plotEnrich(sig.enrich[[8]], numChar = 65, title = names(sig.enrich)[[8]])
+plotEnrich(sig.enrich[[9]], numChar = 65, title = names(sig.enrich)[[9]])
+dev.off()
+
+sig.enrich <- enrichr(m24.ko.deg, dbs)
+pdf(file.path(plots.dir, "MV411_24hr_allKO_CCSvDMSO_DEGs_enrichR_plots.pdf"), height = 8, width = 10)
+plotEnrich(sig.enrich[[1]], numChar = 65, title = names(sig.enrich)[[1]])
+plotEnrich(sig.enrich[[2]], numChar = 65, title = names(sig.enrich)[[2]])
+plotEnrich(sig.enrich[[3]], numChar = 65, title = names(sig.enrich)[[3]])
+plotEnrich(sig.enrich[[4]], numChar = 65, title = names(sig.enrich)[[4]])
+plotEnrich(sig.enrich[[5]], numChar = 65, title = names(sig.enrich)[[5]])
+plotEnrich(sig.enrich[[6]], numChar = 65, title = names(sig.enrich)[[6]])
+plotEnrich(sig.enrich[[7]], numChar = 65, title = names(sig.enrich)[[7]])
+plotEnrich(sig.enrich[[8]], numChar = 65, title = names(sig.enrich)[[8]])
+plotEnrich(sig.enrich[[9]], numChar = 65, title = names(sig.enrich)[[9]])
+dev.off()
+
+sig.enrich <- enrichr(o24.ko.deg, dbs)
+pdf(file.path(plots.dir, "OPM2_24hr_allKO_CCSvDMSO_DEGs_enrichR_plots.pdf"), height = 8, width = 10)
+plotEnrich(sig.enrich[[1]], numChar = 65, title = names(sig.enrich)[[1]])
+plotEnrich(sig.enrich[[2]], numChar = 65, title = names(sig.enrich)[[2]])
+plotEnrich(sig.enrich[[3]], numChar = 65, title = names(sig.enrich)[[3]])
+plotEnrich(sig.enrich[[4]], numChar = 65, title = names(sig.enrich)[[4]])
+plotEnrich(sig.enrich[[5]], numChar = 65, title = names(sig.enrich)[[5]])
+plotEnrich(sig.enrich[[6]], numChar = 65, title = names(sig.enrich)[[6]])
+plotEnrich(sig.enrich[[7]], numChar = 65, title = names(sig.enrich)[[7]])
+plotEnrich(sig.enrich[[8]], numChar = 65, title = names(sig.enrich)[[8]])
+plotEnrich(sig.enrich[[9]], numChar = 65, title = names(sig.enrich)[[9]])
+dev.off()
+```
+
+# make venn of drug only(safe) & KO only (DMSO) sig genes for each cell line & time
+```{r}
+venn.col <- brewer.pal(5, "Pastel2")
+
+# get DEGs for each KOvSafe in DMSO
+m6.ino80.deg <- ftest.list$MV411_INO80_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_INO80_DMSO_6hrvsSafe$table$QValue < 0.05)]
+m6.ino80e.deg <- ftest.list$MV411_INO80E_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_INO80E_DMSO_6hrvsSafe$table$QValue < 0.05)]
+m6.tfpt.deg <- ftest.list$MV411_TFPT_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_TFPT_DMSO_6hrvsSafe$table$QValue < 0.05)]
+m6.uchl5.deg <- ftest.list$MV411_UCHL5_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_DMSO_6hrvsSafe$table$QValue < 0.05)]
+
+# make venn of above w/CCSvDMSo in safe
+venn.diagram(
+  x = list(m6.safe.deg, m6.ino80.deg, m6.ino80e.deg, m6.tfpt.deg, m6.uchl5.deg), 
+  category.names = c("M6_Safe_CCSvDMSO", "M6_DMSO_INO80vSafe", "M6_DMSO_INO80EvSafe", "M6_DMSO_TFPTvSafe", "M6_DMSO_UCHL5vSafe"),
+  filename = file.path(plots.dir, "venn_MOLM13_6hr_CCS_KO.png"),
+  output = TRUE, 
+  fill = venn.col
+)
+
+# get genes in intersect
+Reduce(intersect, list(m6.safe.deg, m6.ino80.deg, m6.ino80e.deg, m6.tfpt.deg, m6.uchl5.deg))
+
+# same for other groups
+o6.ino80.deg <- ftest.list$OPM2_INO80_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_INO80_DMSO_6hrvsSafe$table$QValue < 0.05)]
+o6.ino80e.deg <- ftest.list$OPM2_INO80E_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_DMSO_6hrvsSafe$table$QValue < 0.05)]
+o6.tfpt.deg <- ftest.list$OPM2_TFPT_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_DMSO_6hrvsSafe$table$QValue < 0.05)]
+o6.uchl5.deg <- ftest.list$OPM2_UCHL5_DMSO_6hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_DMSO_6hrvsSafe$table$QValue < 0.05)]
+
+venn.diagram(
+  x = list(o6.safe.deg, o6.ino80.deg, o6.ino80e.deg, o6.tfpt.deg, o6.uchl5.deg), 
+  category.names = c("O6_Safe_CCSvDMSO", "O6_DMSO_INO80vSafe", "O6_DMSO_INO80EvSafe", "O6_DMSO_TFPTvSafe", "O6_DMSO_UCHL5vSafe"),
+  filename = file.path(plots.dir, "venn_OPM2_6hr_CCS_KO.png"),
+  output = TRUE, 
+  fill = venn.col
+)
+
+Reduce(intersect, list(o6.safe.deg, o6.ino80.deg, o6.ino80e.deg, o6.tfpt.deg, o6.uchl5.deg))
+
+m24.ino80.deg <- ftest.list$MV411_INO80_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_INO80_DMSO_24hrvsSafe$table$QValue < 0.05)]
+m24.ino80e.deg <- ftest.list$MV411_INO80E_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_INO80E_DMSO_24hrvsSafe$table$QValue < 0.05)]
+m24.tfpt.deg <- ftest.list$MV411_TFPT_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_TFPT_DMSO_24hrvsSafe$table$QValue < 0.05)]
+m24.uchl5.deg <- ftest.list$MV411_UCHL5_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_DMSO_24hrvsSafe$table$QValue < 0.05)]
+
+venn.diagram(
+  x = list(m24.safe.deg, m24.ino80.deg, m24.ino80e.deg, m24.tfpt.deg, m24.uchl5.deg), 
+  category.names = c("M24_Safe_CCSvDMSO", "M24_DMSO_INO80vSafe", "M24_DMSO_INO80EvSafe", "M24_DMSO_TFPTvSafe", "M24_DMSO_UCHL5vSafe"),
+  filename = file.path(plots.dir, "venn_MOLM13_24hr_CCS_KO.png"),
+  output = TRUE, 
+  fill = venn.col
+)
+
+Reduce(intersect, list(m24.safe.deg, m24.ino80.deg, m24.ino80e.deg, m24.tfpt.deg, m24.uchl5.deg))
+
+o24.ino80.deg <- ftest.list$OPM2_INO80_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_INO80_DMSO_24hrvsSafe$table$QValue < 0.05)]
+o24.ino80e.deg <- ftest.list$OPM2_INO80E_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_DMSO_24hrvsSafe$table$QValue < 0.05)]
+o24.tfpt.deg <- ftest.list$OPM2_TFPT_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_DMSO_24hrvsSafe$table$QValue < 0.05)]
+o24.uchl5.deg <- ftest.list$OPM2_UCHL5_DMSO_24hrvsSafe$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_DMSO_24hrvsSafe$table$QValue < 0.05)]
+
+venn.diagram(
+  x = list(o24.safe.deg, o24.ino80.deg, o24.ino80e.deg, o24.tfpt.deg, o24.uchl5.deg), 
+  category.names = c("O24_Safe_CCSvDMSO", "O24_DMSO_INO80vSafe", "O24_DMSO_INO80EvSafe", "O24_DMSO_TFPTvSafe", "O24_DMSO_UCHL%vSafe"),
+  filename = file.path(plots.dir, "venn_OPM2_24hr_CCS_KO.png"),
+  output = TRUE, 
+  fill = venn.col
+)
+
+Reduce(intersect, list(o24.safe.deg, o24.ino80.deg, o24.ino80e.deg, o24.tfpt.deg, o24.uchl5.deg))
+```
+
+# Use likelihood ratio test in DEseq to test for DE from drug:KO
+```{r}
+# set full model with drug:isKO variable
+m6.dds <- DESeqDataSetFromMatrix(
+  countData = dge$counts[, which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "6hr")], 
+  colData = dge$samples[which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "6hr"), ], 
+  design = ~ drug + isKO + drug:isKO
+  )
+# now run LRT on reduced model
+m6.dds.lrt <- DESeq(m6.dds, test = "LRT", reduced = ~ drug + isKO)
+
+m6.res <- results(m6.dds.lrt)
+
+# now for other comparisons
+o6.dds <- DESeqDataSetFromMatrix(
+  countData = dge$counts[, which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "6hr")], 
+  colData = dge$samples[which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "6hr"), ], 
+  design = ~ drug + isKO + drug:isKO
+  )
+# now run LRT on reduced model
+o6.dds.lrt <- DESeq(o6.dds, test = "LRT", reduced = ~ drug + isKO)
+
+o6.res <- results(o6.dds.lrt)
+
+m24.dds <- DESeqDataSetFromMatrix(
+  countData = dge$counts[, which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "24hr")], 
+  colData = dge$samples[which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "24hr"), ], 
+  design = ~ drug + isKO + drug:isKO
+  )
+# now run LRT on reduced model
+m24.dds.lrt <- DESeq(m24.dds, test = "LRT", reduced = ~ drug + isKO)
+
+m24.res <- results(m24.dds.lrt)
+
+o24.dds <- DESeqDataSetFromMatrix(
+  countData = dge$counts[, which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "24hr")], 
+  colData = dge$samples[which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "24hr"), ], 
+  design = ~ drug + isKO + drug:isKO
+  )
+# now run LRT on reduced model
+o24.dds.lrt <- DESeq(o24.dds, test = "LRT", reduced = ~ drug + isKO)
+
+o24.res <- results(o24.dds.lrt)
+```
+
+# nothing really sig by LRT
+# look at DEGs from drug only (safe) in heatmap to see changes across all
+```{r}
+# get which samples are m6 cat
+m6.samples <- which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "6hr")
+
+m6.heat <- dge$counts[which(dge$genes$Symbol %in% m6.safe.deg), m6.samples]
+m6.heat.mat <- as.matrix(m6.heat)
+# normalise by TMMs
+m6.heat.mat <- m6.heat.mat %*% diag(dge$samples$norm.factors[m6.samples])
+# get z-scale
+m6.heat.mat <- t(scale(t(m6.heat.mat)))
+rownames(m6.heat.mat) <- dge$genes$Symbol[which(dge$genes$Symbol %in% m6.safe.deg)]
+colnames(m6.heat.mat) <- dge$samples$Sample_Name[m6.samples]
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  m6.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs", 
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6)
+  )
+dev.off()
+
+# now for 24h
+m24.samples <- which(dge$samples$Cell_line == "MV411" & dge$samples$Timepoint == "24hr")
+
+m24.heat <- dge$counts[which(dge$genes$Symbol %in% m24.safe.deg), m24.samples]
+m24.heat.mat <- as.matrix(m24.heat)
+# normalise by TMMs
+m24.heat.mat <- m24.heat.mat %*% diag(dge$samples$norm.factors[m24.samples])
+# get z-scale
+m24.heat.mat <- t(scale(t(m24.heat.mat)))
+rownames(m24.heat.mat) <- dge$genes$Symbol[which(dge$genes$Symbol %in% m24.safe.deg)]
+colnames(m24.heat.mat) <- dge$samples$Sample_Name[m24.samples]
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  m24.heat.mat, name = "z-score(TMM)", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs", 
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6)
+  )
+dev.off()
+
+# OPM2
+o6.samples <- which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "6hr")
+
+o6.heat <- dge$counts[which(dge$genes$Symbol %in% o6.safe.deg), o6.samples]
+o6.heat.mat <- as.matrix(o6.heat)
+# normalise by TMMs
+o6.heat.mat <- o6.heat.mat %*% diag(dge$samples$norm.factors[o6.samples])
+# get z-scale
+o6.heat.mat <- t(scale(t(o6.heat.mat)))
+rownames(o6.heat.mat) <- dge$genes$Symbol[which(dge$genes$Symbol %in% o6.safe.deg)]
+colnames(o6.heat.mat) <- dge$samples$Sample_Name[o6.samples]
+
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  o6.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs", 
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6)
+  )
+dev.off()
+
+# now for 24h
+o24.samples <- which(dge$samples$Cell_line == "OPM2" & dge$samples$Timepoint == "24hr")
+
+o24.heat <- dge$counts[which(dge$genes$Symbol %in% o24.safe.deg), o24.samples]
+o24.heat.mat <- as.matrix(o24.heat)
+# normalise by TMMs
+o24.heat.mat <- o24.heat.mat %*% diag(dge$samples$norm.factors[o24.samples])
+# get z-scale
+o24.heat.mat <- t(scale(t(o24.heat.mat)))
+rownames(o24.heat.mat) <- dge$genes$Symbol[which(dge$genes$Symbol %in% o24.safe.deg)]
+colnames(o24.heat.mat) <- dge$samples$Sample_Name[o24.samples]
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  o24.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs", 
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6)
+  )
+dev.off()
+```
+
+# separate heatmaps into KO+DMSO & KO+CCS, also split by up/down in safe and force col order
+```{r}
+# normalise by TMMs
+m6.heat <- m6.heat %*% diag(dge$samples$norm.factors[m6.samples])
+# need to reassign colnames after mat mult
+colnames(m6.heat) <- colnames(dge$counts)[m6.samples]
+
+# merge m6 df w/drug only ftest table
+m6.heat <- as.data.frame(m6.heat)
+m6.heat$ensg <- rownames(m6.heat)
+m6.heat <- merge(m6.heat, ftest.list$MV411_Safe_CCS_6hrvsDMSO$table)
+# add column for direction of DEGs
+m6.heat$deg_group <- ifelse(m6.heat$logFC > 0, "up", "down")
+
+# limit to sig degs
+m6.heat <- m6.heat[which(m6.heat$hgnc_symbol %in% m6.safe.deg), ]
+
+# make col ordered heatmap w/all samples
+m6.cols <- c(8, 9, 12, 28:30, 22:24, 10, 11, 14, 25:27, 15, 18, 19, 20, 21, 5:7, 13, 16, 17, 2:4)
+m6.heat.mat <- as.matrix(m6.heat[, m6.cols])
+rownames(m6.heat.mat) <- m6.heat$hgnc_symbol
+colnames(m6.heat.mat) <- colnames(m6.heat)[m6.cols]
+
+m6.heat.mat <- t(scale(t(m6.heat.mat)))
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  m6.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m6.heat$deg_group
+  )
+dev.off()
+
+# separate into CCS & DMSO tables, reorder columns & cast as matrix
+m6d.cols <- c(8, 9, 12, 28:30, 22:27, 20, 21, 13, 16, 17)
+m6d.heat.mat <- as.matrix(m6.heat[, m6d.cols])
+rownames(m6d.heat.mat) <- m6.heat$hgnc_symbol
+colnames(m6d.heat.mat) <- colnames(m6.heat)[m6d.cols]
+m6c.cols <- c(8, 9, 12, 28:30, 10, 11, 14, 15, 18, 19, 5:7, 2:4)
+m6c.heat.mat <- as.matrix(m6.heat[, m6c.cols])
+rownames(m6c.heat.mat) <- m6.heat$hgnc_symbol
+colnames(m6c.heat.mat) <- colnames(m6.heat)[m6c.cols]
+
+# get z-scale
+m6d.heat.mat <- t(scale(t(m6d.heat.mat)))
+m6c.heat.mat <- t(scale(t(m6c.heat.mat)))
+
+# make heatmaps w/ groups & no col clustering
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs_DMSOonly.pdf"))
+Heatmap(
+  m6d.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs_DMSOonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m6.heat$deg_group
+  )
+dev.off()
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs_CCSonly.pdf"))
+Heatmap(
+  m6c.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs_CCSonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m6.heat$deg_group
+  )
+dev.off()
+
+# same for 24 hr group
+# normalise by TMMs
+m24.heat <- m24.heat %*% diag(dge$samples$norm.factors[m24.samples])
+# need to reassign colnames after mat mult
+colnames(m24.heat) <- colnames(dge$counts)[m24.samples]
+
+# merge m24 df w/drug only ftest table
+m24.heat <- as.data.frame(m24.heat)
+m24.heat$ensg <- rownames(m24.heat)
+m24.heat <- merge(m24.heat, ftest.list$MV411_Safe_CCS_24hrvsDMSO$table)
+# add column for direction of DEGs
+m24.heat$deg_group <- ifelse(m24.heat$logFC > 0, "up", "down")
+
+# limit to sig degs
+m24.heat <- m24.heat[which(m24.heat$hgnc_symbol %in% m24.safe.deg), ]
+
+# make col ordered heatmap w/all samples
+m24.cols <- c(20, 21, 24, 11:13, 5:7, 22, 23, 26, 8:10, 27, 30, 31, 2:4, 17:19, 25, 28, 29, 14:16)
+m24.heat.mat <- as.matrix(m24.heat[, m24.cols])
+rownames(m24.heat.mat) <- m24.heat$hgnc_symbol
+colnames(m24.heat.mat) <- colnames(m24.heat)[m24.cols]
+
+m24.heat.mat <- t(scale(t(m24.heat.mat)))
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  m24.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m24.heat$deg_group
+  )
+dev.off()
+
+# separate into CCS & DMSO tables, reorder columns & cast as matrix
+m24d.cols <- c(20, 21, 24, 11:13, 5:10, 2:4, 25, 28, 29)
+m24d.heat.mat <- as.matrix(m24.heat[, m24d.cols])
+rownames(m24d.heat.mat) <- m24.heat$hgnc_symbol
+colnames(m24d.heat.mat) <- colnames(m24.heat)[m24d.cols]
+m24c.cols <- c(20, 21, 24, 11:13, 22, 23, 26, 27, 30, 31, 17:19, 14:16)
+m24c.heat.mat <- as.matrix(m24.heat[, m24c.cols])
+rownames(m24c.heat.mat) <- m24.heat$hgnc_symbol
+colnames(m24c.heat.mat) <- colnames(m24.heat)[m24c.cols]
+
+# get z-scale
+m24d.heat.mat <- t(scale(t(m24d.heat.mat)))
+m24c.heat.mat <- t(scale(t(m24c.heat.mat)))
+
+# make heatmaps w/ groups & no col clustering
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs_DMSOonly.pdf"))
+Heatmap(
+  m24d.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs_DMSOonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m24.heat$deg_group
+  )
+dev.off()
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs_CCSonly.pdf"))
+Heatmap(
+  m24c.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs_CCSonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m24.heat$deg_group
+  )
+dev.off()
+
+# and for OPM2
+# normalise by TMMs
+o6.heat <- o6.heat %*% diag(dge$samples$norm.factors[o6.samples])
+# need to reassign colnames after mat mult
+colnames(o6.heat) <- colnames(dge$counts)[o6.samples]
+
+# merge o6 df w/drug only ftest table
+o6.heat <- as.data.frame(o6.heat)
+o6.heat$ensg <- rownames(o6.heat)
+o6.heat <- merge(o6.heat, ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table)
+# add column for direction of DEGs
+o6.heat$deg_group <- ifelse(o6.heat$logFC > 0, "up", "down")
+
+# limit to sig degs
+o6.heat <- o6.heat[which(o6.heat$hgnc_symbol %in% o6.safe.deg), ]
+
+# make col ordered heatmap w/all samples
+o6.cols <- c(14, 16, 18, 5:7, 29:31, 15, 17, 19, 2:4, 21, 23, 25, 26:28, 11:13, 20, 22, 24, 8:10)
+o6.heat.mat <- as.matrix(o6.heat[, o6.cols])
+rownames(o6.heat.mat) <- o6.heat$hgnc_symbol
+colnames(o6.heat.mat) <- colnames(o6.heat)[o6.cols]
+
+o6.heat.mat <- t(scale(t(o6.heat.mat)))
+
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  o6.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o6.heat$deg_group
+  )
+dev.off()
+
+# separate into CCS & DMSO tables, reorder columns & cast as matrix
+o6d.cols <- c(14, 16, 18, 5:7, 29:31, 2:4, 26:28, 20, 22, 24)
+o6d.heat.mat <- as.matrix(o6.heat[, o6d.cols])
+rownames(o6d.heat.mat) <- o6.heat$hgnc_symbol
+colnames(o6d.heat.mat) <- colnames(o6.heat)[o6d.cols]
+o6c.cols <- c(14, 16, 18, 5:7, 15, 17, 19, 21, 23, 25, 11:13, 8:10)
+o6c.heat.mat <- as.matrix(o6.heat[, o6c.cols])
+rownames(o6c.heat.mat) <- o6.heat$hgnc_symbol
+colnames(o6c.heat.mat) <- colnames(o6.heat)[o6c.cols]
+
+# get z-scale
+o6d.heat.mat <- t(scale(t(o6d.heat.mat)))
+o6c.heat.mat <- t(scale(t(o6c.heat.mat)))
+
+# make heatmaps w/ groups & no col clustering
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs_DMSOonly.pdf"))
+Heatmap(
+  o6d.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs_DMSOonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o6.heat$deg_group
+  )
+dev.off()
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs_CCSonly.pdf"))
+Heatmap(
+  o6c.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs_CCSonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o6.heat$deg_group
+  )
+dev.off()
+
+# same for 24 hr group
+# normalise by TMMs
+o24.heat <- o24.heat %*% diag(dge$samples$norm.factors[o24.samples])
+# need to reassign colnames after mat mult
+colnames(o24.heat) <- colnames(dge$counts)[o24.samples]
+
+# merge o24 df w/drug only ftest table
+o24.heat <- as.data.frame(o24.heat)
+o24.heat$ensg <- rownames(o24.heat)
+o24.heat <- merge(o24.heat, ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table)
+# add column for direction of DEGs
+o24.heat$deg_group <- ifelse(o24.heat$logFC > 0, "up", "down")
+
+# limit to sig degs
+o24.heat <- o24.heat[which(o24.heat$hgnc_symbol %in% o24.safe.deg), ]
+
+# make col ordered heatmap w/all samples
+o24.cols <- c(2, 3, 6, 23, 24, 17:19, 4, 5, 8, 20:22, 9, 12, 13, 14:16, 28:30, 7, 10, 11, 25:27)
+o24.heat.mat <- as.matrix(o24.heat[, o24.cols])
+rownames(o24.heat.mat) <- o24.heat$hgnc_symbol
+colnames(o24.heat.mat) <- colnames(o24.heat)[o24.cols]
+
+o24.heat.mat <- t(scale(t(o24.heat.mat)))
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs.pdf"))
+Heatmap(
+  o24.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o24.heat$deg_group
+  )
+dev.off()
+
+# separate into CCS & DMSO tables, reorder columns & cast as matrix
+o24d.cols <- c(2, 3, 6, 23, 24, 17:22, 14:16, 7, 10, 11)
+o24d.heat.mat <- as.matrix(o24.heat[, o24d.cols])
+rownames(o24d.heat.mat) <- o24.heat$hgnc_symbol
+colnames(o24d.heat.mat) <- colnames(o24.heat)[o24d.cols]
+o24c.cols <- c(2, 3, 6, 23, 24, 4, 5, 8, 9, 12, 13, 28:30, 25:27)
+o24c.heat.mat <- as.matrix(o24.heat[, o24c.cols])
+rownames(o24c.heat.mat) <- o24.heat$hgnc_symbol
+colnames(o24c.heat.mat) <- colnames(o24.heat)[o24c.cols]
+
+# get z-scale
+o24d.heat.mat <- t(scale(t(o24d.heat.mat)))
+o24c.heat.mat <- t(scale(t(o24c.heat.mat)))
+
+# make heatmaps w/ groups & no col clustering
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs_DMSOonly.pdf"))
+Heatmap(
+  o24d.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs_DMSOonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o24.heat$deg_group
+  )
+dev.off()
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs_CCSonly.pdf"))
+Heatmap(
+  o24c.heat.mat, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs_CCSonly", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o24.heat$deg_group
+  )
+dev.off()
+```
+
+# make boxplots & violins of LFC in CCSvDMSO comps for each group over safe DEGs by direction
+```{r}
+# get safe DEGs w/ group for LFC direction
+m6.safe.lfc.up.table <- ftest.list$MV411_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC > 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.ino80.lfc.up.table <- ftest.list$MV411_INO80_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.ino80e.lfc.up.table <- ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.tfpt.lfc.up.table <- ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.uchl5.lfc.up.table <- ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.safe.lfc.down.table <- ftest.list$MV411_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC < 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.ino80.lfc.down.table <- ftest.list$MV411_INO80_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.ino80e.lfc.down.table <- ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.tfpt.lfc.down.table <- ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m6.uchl5.lfc.down.table <- ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+# combine all groups and plot m6 group
+m6.lfc.box.data <- rbind(
+  m6.safe.lfc.up.table,
+  m6.ino80.lfc.up.table,
+  m6.ino80e.lfc.up.table,
+  m6.tfpt.lfc.up.table,
+  m6.uchl5.lfc.up.table,
+  m6.safe.lfc.down.table,
+  m6.ino80.lfc.down.table,
+  m6.ino80e.lfc.down.table,
+  m6.tfpt.lfc.down.table,
+  m6.uchl5.lfc.down.table
+  )
+
+pdf(file.path(plots.dir, "boxplot_MOLM13_6hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(m6.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_boxplot() +
+  ggtitle("MOLM13 6hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_MOLM13_6hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(m6.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("MOLM13 6hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+# now for m24 group
+m24.safe.lfc.up.table <- ftest.list$MV411_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC > 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.ino80.lfc.up.table <- ftest.list$MV411_INO80_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.ino80e.lfc.up.table <- ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.tfpt.lfc.up.table <- ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.uchl5.lfc.up.table <- ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.safe.lfc.down.table <- ftest.list$MV411_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC < 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.ino80.lfc.down.table <- ftest.list$MV411_INO80_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.ino80e.lfc.down.table <- ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.tfpt.lfc.down.table <- ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+m24.uchl5.lfc.down.table <- ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% m24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+# combine all groups and plot m24 group
+m24.lfc.box.data <- rbind(
+  m24.safe.lfc.up.table,
+  m24.ino80.lfc.up.table,
+  m24.ino80e.lfc.up.table,
+  m24.tfpt.lfc.up.table,
+  m24.uchl5.lfc.up.table,
+  m24.safe.lfc.down.table,
+  m24.ino80.lfc.down.table,
+  m24.ino80e.lfc.down.table,
+  m24.tfpt.lfc.down.table,
+  m24.uchl5.lfc.down.table
+  )
+
+pdf(file.path(plots.dir, "boxplot_MOLM13_24hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(m24.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_boxplot() +
+  ggtitle("MOLM13 24hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_MOLM13_24hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(m24.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("MOLM13 24hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+# and OPM2s
+o6.safe.lfc.up.table <- ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC > 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.ino80.lfc.up.table <- ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.ino80e.lfc.up.table <- ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.tfpt.lfc.up.table <- ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.uchl5.lfc.up.table <- ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.safe.lfc.down.table <- ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC < 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.ino80.lfc.down.table <- ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.ino80e.lfc.down.table <- ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.tfpt.lfc.down.table <- ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o6.uchl5.lfc.down.table <- ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o6.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+# combine all groups and plot o6 group
+o6.lfc.box.data <- rbind(
+  o6.safe.lfc.up.table,
+  o6.ino80.lfc.up.table,
+  o6.ino80e.lfc.up.table,
+  o6.tfpt.lfc.up.table,
+  o6.uchl5.lfc.up.table,
+  o6.safe.lfc.down.table,
+  o6.ino80.lfc.down.table,
+  o6.ino80e.lfc.down.table,
+  o6.tfpt.lfc.down.table,
+  o6.uchl5.lfc.down.table
+  )
+
+pdf(file.path(plots.dir, "boxplot_OPM2_6hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(o6.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_boxplot() +
+  ggtitle("OPM2 6hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_OPM2_6hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(o6.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("OPM2 6hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+# now for o24 group
+o24.safe.lfc.up.table <- ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC > 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.ino80.lfc.up.table <- ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.ino80e.lfc.up.table <- ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.tfpt.lfc.up.table <- ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.uchl5.lfc.up.table <- ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.up.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "up") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.safe.lfc.down.table <- ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05 & logFC < 0) %>%
+  mutate(comp_group = "Safe_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.ino80.lfc.down.table <- ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.ino80e.lfc.down.table <- ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "INO80E_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.tfpt.lfc.down.table <- ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "TFPT_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+o24.uchl5.lfc.down.table <- ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table %>%
+  filter(hgnc_symbol %in% o24.safe.lfc.down.table$hgnc_symbol) %>%
+  mutate(comp_group = "UCHL5_CCSvDMSO", deg_group = "down") %>%
+  select(logFC, hgnc_symbol, deg_group, comp_group)
+
+# combine all groups and plot o24 group
+o24.lfc.box.data <- rbind(
+  o24.safe.lfc.up.table,
+  o24.ino80.lfc.up.table,
+  o24.ino80e.lfc.up.table,
+  o24.tfpt.lfc.up.table,
+  o24.uchl5.lfc.up.table,
+  o24.safe.lfc.down.table,
+  o24.ino80.lfc.down.table,
+  o24.ino80e.lfc.down.table,
+  o24.tfpt.lfc.down.table,
+  o24.uchl5.lfc.down.table
+  )
+
+pdf(file.path(plots.dir, "boxplot_OPM2_24hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(o24.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_boxplot() +
+  ggtitle("OPM2 24hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_OPM2_24hr_safe_CCsvDMSO_DEGs.pdf"))
+ggplot(o24.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("OPM2 24hr Safe DEGs") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+  theme_bw()
+dev.off()
+```
+
+# remake heatmaps with comb reps
+```{r}
+m6.heat.merged <- as.matrix(data.frame(
+  "MV411_Safe_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_Safe_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_Safe_CCS_6hr" = rowMeans(m6.heat[, grepl("MV411_Safe_CCS_6hr", colnames(m6.heat))]),
+  "MV411_UCHL5_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_UCHL5_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_UCHL5_CCS_6hr" = rowMeans(m6.heat[, grepl("MV411_UCHL5_CCS_6hr", colnames(m6.heat))]),
+  "MV411_TFPT_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_TFPT_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_TFPT_CCS_6hr" = rowMeans(m6.heat[, grepl("MV411_TFPT_CCS_6hr", colnames(m6.heat))]),
+  "MV411_INO80E_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80E_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_INO80E_CCS_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80E_CCS_6hr", colnames(m6.heat))]),
+  "MV411_INO80_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_INO80_CCS_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80_CCS_6hr", colnames(m6.heat))])
+))
+
+rownames(m6.heat.merged) <- m6.heat$hgnc_symbol
+
+m6.heat.merged <- t(scale(t(m6.heat.merged)))
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs_mergedReps.pdf"))
+Heatmap(
+  m6.heat.merged, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m6.heat$deg_group
+  )
+dev.off()
+
+m24.heat.merged <- as.matrix(data.frame(
+  "MV411_Safe_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_Safe_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_Safe_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_Safe_CCS_24hr", colnames(m24.heat))]),
+  "MV411_UCHL5_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_UCHL5_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_UCHL5_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_UCHL5_CCS_24hr", colnames(m24.heat))]),
+  "MV411_TFPT_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_TFPT_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_TFPT_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_TFPT_CCS_24hr", colnames(m24.heat))]),
+  "MV411_INO80E_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80E_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80E_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80E_CCS_24hr", colnames(m24.heat))]),
+  "MV411_INO80_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80_CCS_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80_CCS_24hr", colnames(m24.heat))])
+))
+
+rownames(m24.heat.merged) <- m24.heat$hgnc_symbol
+
+m24.heat.merged <- t(scale(t(m24.heat.merged)))
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs_mergedReps.pdf"))
+Heatmap(
+  m24.heat.merged, 
+  name = "z-score(TMM)", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m24.heat$deg_group
+  )
+dev.off()
+
+o6.heat.merged <- as.matrix(data.frame(
+  "OPM2_Safe_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_Safe_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_Safe_CCS_6hr" = rowMeans(o6.heat[, grepl("OPM2_Safe_CCS_6hr", colnames(o6.heat))]),
+  "OPM2_UCHL5_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_UCHL5_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_UCHL5_CCS_6hr" = rowMeans(o6.heat[, grepl("OPM2_UCHL5_CCS_6hr", colnames(o6.heat))]),
+  "OPM2_TFPT_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_TFPT_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_TFPT_CCS_6hr" = rowMeans(o6.heat[, grepl("OPM2_TFPT_CCS_6hr", colnames(o6.heat))]),
+  "OPM2_INO80E_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80E_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_INO80E_CCS_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80E_CCS_6hr", colnames(o6.heat))]),
+  "OPM2_INO80_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_INO80_CCS_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80_CCS_6hr", colnames(o6.heat))])
+))
+
+rownames(o6.heat.merged) <- o6.heat$hgnc_symbol
+
+o6.heat.merged <- t(scale(t(o6.heat.merged)))
+
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs_mergedReps.pdf"))
+Heatmap(
+  o6.heat.merged, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o6.heat$deg_group
+  )
+dev.off()
+
+o24.heat.merged <- as.matrix(data.frame(
+  "OPM2_Safe_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_Safe_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_Safe_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_Safe_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_UCHL5_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_UCHL5_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_UCHL5_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_UCHL5_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_TFPT_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_TFPT_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_TFPT_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_TFPT_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_INO80E_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80E_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80E_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80E_CCS_24hr", colnames(o24.heat))]),
+  "OPM2_INO80_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80_CCS_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80_CCS_24hr", colnames(o24.heat))])
+))
+
+rownames(o24.heat.merged) <- o24.heat$hgnc_symbol
+
+o24.heat.merged <- t(scale(t(o24.heat.merged)))
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs_mergedReps.pdf"))
+Heatmap(
+  o24.heat.merged, 
+  name = "z-score(TMM)", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o24.heat$deg_group
+  )
+dev.off()
+```
+
+# make heatmaps by fold change
+```{r}
+m6.drug.ftest.list <- list(
+  "MV411_Safe_CCS_6hrvsDMSO" = ftest.list$MV411_Safe_CCS_6hrvsDMSO,
+  "MV411_UCHL5_CCS_6hrvsDMSO" = ftest.list$MV411_UCHL5_CCS_6hrvsDMSO,
+  "MV411_TFPT_CCS_6hrvsDMSO" = ftest.list$MV411_TFPT_CCS_6hrvsDMSO,
+  "MV411_INO80E_CCS_6hrvsDMSO" = ftest.list$MV411_INO80E_CCS_6hrvsDMSO,
+  "MV411_INO80_CCS_6hrvsDMSO" = ftest.list$MV411_INO80_CCS_6hrvsDMSO
+)
+
+m6.drug.df <- m6.drug.ftest.list$MV411_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05) %>%
+  select(hgnc_symbol, logFC) %>%
+  rename(logFC = "MV411_Safe_CCS_6hrvsDMSO")
+# remove blank symbols
+m6.drug.df <- m6.drug.df[-which(m6.drug.df$hgnc_symbol == "" | m6.drug.df$hgnc_symbol == "NA"), ]
+
+for(list.i in 2:5){
+  comp.df <- m6.drug.ftest.list[[list.i]]$table %>%
+    filter(hgnc_symbol %in% m6.drug.df$hgnc_symbol) %>%
+    select(hgnc_symbol, logFC) %>%
+    rename(logFC = names(m6.drug.ftest.list)[list.i])
+  m6.drug.df <- merge(m6.drug.df, comp.df)
+}
+
+# some have duplicate entrez ids so remove any dups
+m6.drug.df <- m6.drug.df[-which(duplicated(m6.drug.df$hgnc_symbol)), ]
+
+# move symbols to rownames
+rownames(m6.drug.df) <- m6.drug.df$hgnc_symbol
+m6.drug.df <- m6.drug.df[, -1]
+# order by deg group
+m6.drug.df <- m6.drug.df[m6.heat$hgnc_symbol, ]
+
+# convert to matrix 
+m6.drug.mat <- as.matrix(m6.drug.df)
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_6hr_Safe_CCSvDMSO_DEGs_LFC.pdf"))
+Heatmap(
+  m6.drug.mat, 
+  name = "log2 Fold Change", 
+  row_title = "MOLM13_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m6.heat$deg_group
+  )
+dev.off()
+
+m24.drug.ftest.list <- list(
+  "MV411_Safe_CCS_24hrvsDMSO" = ftest.list$MV411_Safe_CCS_24hrvsDMSO,
+  "MV411_UCHL5_CCS_24hrvsDMSO" = ftest.list$MV411_UCHL5_CCS_24hrvsDMSO,
+  "MV411_TFPT_CCS_24hrvsDMSO" = ftest.list$MV411_TFPT_CCS_24hrvsDMSO,
+  "MV411_INO80E_CCS_24hrvsDMSO" = ftest.list$MV411_INO80E_CCS_24hrvsDMSO,
+  "MV411_INO80_CCS_24hrvsDMSO" = ftest.list$MV411_INO80_CCS_24hrvsDMSO
+)
+
+m24.drug.df <- m24.drug.ftest.list$MV411_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05) %>%
+  select(hgnc_symbol, logFC) %>%
+  rename(logFC = "MV411_Safe_CCS_24hrvsDMSO")
+# remove blank symbols
+m24.drug.df <- m24.drug.df[-which(m24.drug.df$hgnc_symbol == "" | m24.drug.df$hgnc_symbol == "NA"), ]
+
+for(list.i in 2:5){
+  comp.df <- m24.drug.ftest.list[[list.i]]$table %>%
+    filter(hgnc_symbol %in% m24.drug.df$hgnc_symbol) %>%
+    select(hgnc_symbol, logFC) %>%
+    rename(logFC = names(m24.drug.ftest.list)[list.i])
+  m24.drug.df <- merge(m24.drug.df, comp.df)
+}
+
+# some have duplicate entrez ids so remove any dups
+m24.drug.df <- m24.drug.df[-which(duplicated(m24.drug.df$hgnc_symbol)), ]
+
+# move symbols to rownames
+rownames(m24.drug.df) <- m24.drug.df$hgnc_symbol
+m24.drug.df <- m24.drug.df[, -1]
+# order by deg group
+m24.drug.df <- m24.drug.df[m24.heat$hgnc_symbol, ]
+
+# convert to matrix 
+m24.drug.mat <- as.matrix(m24.drug.df)
+
+pdf(file.path(plots.dir, "heatmap_MOLM13_24hr_Safe_CCSvDMSO_DEGs_LFC.pdf"))
+Heatmap(
+  m24.drug.mat, 
+  name = "log2 Fold Change", 
+  row_title = "MOLM13_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = m24.heat$deg_group
+  )
+dev.off()
+
+o6.drug.ftest.list <- list(
+  "OPM2_Safe_CCS_6hrvsDMSO" = ftest.list$OPM2_Safe_CCS_6hrvsDMSO,
+  "OPM2_UCHL5_CCS_6hrvsDMSO" = ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO,
+  "OPM2_TFPT_CCS_6hrvsDMSO" = ftest.list$OPM2_TFPT_CCS_6hrvsDMSO,
+  "OPM2_INO80E_CCS_6hrvsDMSO" = ftest.list$OPM2_INO80E_CCS_6hrvsDMSO,
+  "OPM2_INO80_CCS_6hrvsDMSO" = ftest.list$OPM2_INO80_CCS_6hrvsDMSO
+)
+
+o6.drug.df <- o6.drug.ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table %>% 
+  filter(QValue < 0.05) %>%
+  select(hgnc_symbol, logFC) %>%
+  rename(logFC = "OPM2_Safe_CCS_6hrvsDMSO")
+# remove blank symbols
+o6.drug.df <- o6.drug.df[-which(o6.drug.df$hgnc_symbol == "" | o6.drug.df$hgnc_symbol == "NA"), ]
+
+for(list.i in 2:5){
+  comp.df <- o6.drug.ftest.list[[list.i]]$table %>%
+    filter(hgnc_symbol %in% o6.drug.df$hgnc_symbol) %>%
+    select(hgnc_symbol, logFC) %>%
+    rename(logFC = names(o6.drug.ftest.list)[list.i])
+  o6.drug.df <- merge(o6.drug.df, comp.df)
+}
+
+# some have duplicate entrez ids so remove any dups
+o6.drug.df <- o6.drug.df[-which(duplicated(o6.drug.df$hgnc_symbol)), ]
+
+# move symbols to rownames
+rownames(o6.drug.df) <- o6.drug.df$hgnc_symbol
+o6.drug.df <- o6.drug.df[, -1]
+# order by deg group
+o6.drug.df <- o6.drug.df[o6.heat$hgnc_symbol, ]
+
+# convert to matrix 
+o6.drug.mat <- as.matrix(o6.drug.df)
+
+pdf(file.path(plots.dir, "heatmap_OPM2_6hr_Safe_CCSvDMSO_DEGs_LFC.pdf"))
+Heatmap(
+  o6.drug.mat, 
+  name = "log2 Fold Change", 
+  row_title = "OPM2_6hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o6.heat$deg_group
+  )
+dev.off()
+
+o24.drug.ftest.list <- list(
+  "OPM2_Safe_CCS_24hrvsDMSO" = ftest.list$OPM2_Safe_CCS_24hrvsDMSO,
+  "OPM2_UCHL5_CCS_24hrvsDMSO" = ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO,
+  "OPM2_TFPT_CCS_24hrvsDMSO" = ftest.list$OPM2_TFPT_CCS_24hrvsDMSO,
+  "OPM2_INO80E_CCS_24hrvsDMSO" = ftest.list$OPM2_INO80E_CCS_24hrvsDMSO,
+  "OPM2_INO80_CCS_24hrvsDMSO" = ftest.list$OPM2_INO80_CCS_24hrvsDMSO
+)
+
+o24.drug.df <- o24.drug.ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table %>% 
+  filter(QValue < 0.05) %>%
+  select(hgnc_symbol, logFC) %>%
+  rename(logFC = "OPM2_Safe_CCS_24hrvsDMSO")
+# remove blank symbols
+o24.drug.df <- o24.drug.df[-which(o24.drug.df$hgnc_symbol == "" | o24.drug.df$hgnc_symbol == "NA"), ]
+
+for(list.i in 2:5){
+  comp.df <- o24.drug.ftest.list[[list.i]]$table %>%
+    filter(hgnc_symbol %in% o24.drug.df$hgnc_symbol) %>%
+    select(hgnc_symbol, logFC) %>%
+    rename(logFC = names(o24.drug.ftest.list)[list.i])
+  o24.drug.df <- merge(o24.drug.df, comp.df)
+}
+
+# some have duplicate entrez ids so remove any dups
+o24.drug.df <- o24.drug.df[-which(duplicated(o24.drug.df$hgnc_symbol)), ]
+
+# move symbols to rownames
+rownames(o24.drug.df) <- o24.drug.df$hgnc_symbol
+o24.drug.df <- o24.drug.df[, -1]
+# order by deg group
+o24.drug.df <- o24.drug.df[o24.heat$hgnc_symbol, ]
+
+# convert to matrix 
+o24.drug.mat <- as.matrix(o24.drug.df)
+
+pdf(file.path(plots.dir, "heatmap_OPM2_24hr_Safe_CCSvDMSO_DEGs_LFC.pdf"))
+Heatmap(
+  o24.drug.mat, 
+  name = "log2 Fold Change", 
+  row_title = "OPM2_24hr_Safe_CCSvDMSO_DEGs", 
+  cluster_columns = FALSE,
+  row_names_gp = gpar(fontsize = 0.5), 
+  column_names_gp = gpar(fontsize = 6),
+  row_split = o24.heat$deg_group
+  )
+dev.off()
+```
+
+# make violins and boxplots of norm counts for genes of interest 
+# first make boxplots for all GOIs combined
+```{r}
+# get norm counts by group limited to gois 
+m6.goi.counts <- dge$counts[which(dge$genes$Symbol %in% c("CDKN1A", "MPO", "MYC", "PKM")), m6.samples]
+m6.goi.counts <- as.matrix(m6.goi.counts)
+# normalise by TMMs
+m6.goi.counts <- m6.goi.counts %*% diag(dge$samples$norm.factors[m6.samples])
+# add colnames
+colnames(m6.goi.counts) <- dge$samples$Sample_Name[m6.samples]
+# transform to long
+m6.goi.box <- melt(m6.goi.counts)
+# rename cols
+colnames(m6.goi.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+m6.goi.box$group <- gsub("MV411_", "", gsub("_6hr_[1-3]$", "", m6.goi.box$group))
+# add treatment group for colours
+m6.goi.box$treatment <- gsub(".*_", "", m6.goi.box$group)
+# set order w/DMSo first
+m6.goi.box$treatment <- factor(m6.goi.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+m6.goi.box$KO <- gsub("_.*", "", m6.goi.box$group)
+
+pdf(file.path(plots.dir, "boxplot_MOLM13_6hr_GOIs.pdf"))
+ggplot(m6.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_boxplot() +
+  ggtitle("MOLM13 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_MOLM13_6hr_GOIs.pdf"))
+ggplot(m6.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("MOLM13 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+# get norm counts by group limited to gois 
+m24.goi.counts <- dge$counts[which(dge$genes$Symbol %in% c("CDKN1A", "MPO", "MYC", "PKM")), m24.samples]
+m24.goi.counts <- as.matrix(m24.goi.counts)
+# normalise by TMMs
+m24.goi.counts <- m24.goi.counts %*% diag(dge$samples$norm.factors[m24.samples])
+# add colnames
+colnames(m24.goi.counts) <- dge$samples$Sample_Name[m24.samples]
+# transform to long
+m24.goi.box <- melt(m24.goi.counts)
+# rename cols
+colnames(m24.goi.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+m24.goi.box$group <- gsub("MV411_", "", gsub("_24hr_[1-3]$", "", m24.goi.box$group))
+# add treatment group for colours
+m24.goi.box$treatment <- gsub(".*_", "", m24.goi.box$group)
+# set order w/DMSo first
+m24.goi.box$treatment <- factor(m24.goi.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+m24.goi.box$KO <- gsub("_.*", "", m24.goi.box$group)
+
+pdf(file.path(plots.dir, "boxplot_MOLM13_24hr_GOIs.pdf"))
+ggplot(m24.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_boxplot() +
+  ggtitle("MOLM13 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_MOLM13_24hr_GOIs.pdf"))
+ggplot(m24.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("MOLM13 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+# get norm counts by group limited to gois 
+o6.goi.counts <- dge$counts[which(dge$genes$Symbol %in% c("PLD4", "IRF4", "IL6R")), o6.samples]
+o6.goi.counts <- as.matrix(o6.goi.counts)
+# normalise by TMMs
+o6.goi.counts <- o6.goi.counts %*% diag(dge$samples$norm.factors[o6.samples])
+# add colnames
+colnames(o6.goi.counts) <- dge$samples$Sample_Name[o6.samples]
+# transform to long
+o6.goi.box <- melt(o6.goi.counts)
+# rename cols
+colnames(o6.goi.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+o6.goi.box$group <- gsub("OPM2_", "", gsub("_6hr_[1-3]$", "", o6.goi.box$group))
+# add treatment group for colours
+o6.goi.box$treatment <- gsub(".*_", "", o6.goi.box$group)
+# set order w/DMSo first
+o6.goi.box$treatment <- factor(o6.goi.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+o6.goi.box$KO <- gsub("_.*", "", o6.goi.box$group)
+
+pdf(file.path(plots.dir, "boxplot_OPM2_6hr_GOIs.pdf"))
+ggplot(o6.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_boxplot() +
+  ggtitle("OPM2 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_OPM2_6hr_GOIs.pdf"))
+ggplot(o6.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("OPM2 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+# get norm counts by group limited to gois 
+o24.goi.counts <- dge$counts[which(dge$genes$Symbol %in% c("PLD4", "IRF4", "IL6R")), o24.samples]
+o24.goi.counts <- as.matrix(o24.goi.counts)
+# normalise by TMMs
+o24.goi.counts <- o24.goi.counts %*% diag(dge$samples$norm.factors[o24.samples])
+# add colnames
+colnames(o24.goi.counts) <- dge$samples$Sample_Name[o24.samples]
+# transform to long
+o24.goi.box <- melt(o24.goi.counts)
+# rename cols
+colnames(o24.goi.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+o24.goi.box$group <- gsub("OPM2_", "", gsub("_24hr_[1-3]$", "", o24.goi.box$group))
+# add treatment group for colours
+o24.goi.box$treatment <- gsub(".*_", "", o24.goi.box$group)
+# set order w/DMSo first
+o24.goi.box$treatment <- factor(o24.goi.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+o24.goi.box$KO <- gsub("_.*", "", o24.goi.box$group)
+
+pdf(file.path(plots.dir, "boxplot_OPM2_24hr_GOIs.pdf"))
+ggplot(o24.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_boxplot() +
+  ggtitle("OPM2 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+
+pdf(file.path(plots.dir, "violin_OPM2_24hr_GOIs.pdf"))
+ggplot(o24.goi.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("OPM2 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  theme_bw()
+dev.off()
+```
+
+# now make barplots for individual genes
+```{r}
+#+++++++++++++++++++++++++
+# Function to calculate the mean and the standard deviation
+  # for each group
+#+++++++++++++++++++++++++
+# data : a data frame
+# varname : the name of a column containing the variable to be summarized
+# groupnames : vector of column names to be used as grouping variables
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm = TRUE),
+      sd = sd(x[[col]], na.rm = TRUE))
+  }
+  data_sum <- ddply(data, groupnames, .fun = summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+ return(data_sum)
+}
+
+# add gene names
+m6.goi.bar <- merge(m6.goi.box, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+# make summary group for gene + group
+m6.goi.bar$sum.group <- paste(m6.goi.bar$group, m6.goi.bar$hgnc_symbol, sep = "_")
+# get summary stats
+m6.goi.bar.sum <- data_summary(m6.goi.bar, varname = "TMMcounts", groupnames = "sum.group")
+# add variables back individually for plots
+m6.goi.bar.sum$KO <- gsub("_.*", "", m6.goi.bar.sum$sum.group)
+m6.goi.bar.sum$treatment <- gsub("_.*$", "", gsub("^.{4,6}_", "", m6.goi.bar.sum$sum.group))
+m6.goi.bar.sum$treatment <- factor(m6.goi.bar.sum$treatment, levels = c("DMSO", "CCS"))
+m6.goi.bar.sum$hgnc_symbol <- gsub(".*_", "", m6.goi.bar.sum$sum.group)
+
+pdf(file.path(plots.dir, "barplot_MOLM13_6hr_GOIs.pdf"))
+ggplot(m6.goi.bar.sum, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ggtitle("MOLM13 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  geom_errorbar(aes(ymin = TMMcounts - sd, ymax = TMMcounts + sd), width = 0.2, 
+                position = position_dodge(0.9)) + 
+  facet_wrap(vars(hgnc_symbol)) +
+  theme_bw()
+dev.off()
+
+# add gene names
+m24.goi.bar <- merge(m24.goi.box, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+# make summary group for gene + group
+m24.goi.bar$sum.group <- paste(m24.goi.bar$group, m24.goi.bar$hgnc_symbol, sep = "_")
+# get summary stats
+m24.goi.bar.sum <- data_summary(m24.goi.bar, varname = "TMMcounts", groupnames = "sum.group")
+# add variables back individually for plots
+m24.goi.bar.sum$KO <- gsub("_.*", "", m24.goi.bar.sum$sum.group)
+m24.goi.bar.sum$treatment <- gsub("_.*$", "", gsub("^.{4,6}_", "", m24.goi.bar.sum$sum.group))
+m24.goi.bar.sum$treatment <- factor(m24.goi.bar.sum$treatment, levels = c("DMSO", "CCS"))
+m24.goi.bar.sum$hgnc_symbol <- gsub(".*_", "", m24.goi.bar.sum$sum.group)
+
+pdf(file.path(plots.dir, "barplot_MOLM13_24hr_GOIs.pdf"))
+ggplot(m24.goi.bar.sum, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ggtitle("MOLM13 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  geom_errorbar(aes(ymin = TMMcounts - sd, ymax = TMMcounts + sd), width = 0.2, 
+                position = position_dodge(0.9)) + 
+  facet_wrap(vars(hgnc_symbol)) +
+  theme_bw()
+dev.off()
+
+# add gene names
+o6.goi.bar <- merge(o6.goi.box, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+# make summary group for gene + group
+o6.goi.bar$sum.group <- paste(o6.goi.bar$group, o6.goi.bar$hgnc_symbol, sep = "_")
+# get summary stats
+o6.goi.bar.sum <- data_summary(o6.goi.bar, varname = "TMMcounts", groupnames = "sum.group")
+# add variables back individually for plots
+o6.goi.bar.sum$KO <- gsub("_.*", "", o6.goi.bar.sum$sum.group)
+o6.goi.bar.sum$treatment <- gsub("_.*$", "", gsub("^.{4,6}_", "", o6.goi.bar.sum$sum.group))
+o6.goi.bar.sum$treatment <- factor(o6.goi.bar.sum$treatment, levels = c("DMSO", "CCS"))
+o6.goi.bar.sum$hgnc_symbol <- gsub(".*_", "", o6.goi.bar.sum$sum.group)
+
+pdf(file.path(plots.dir, "barplot_OPM2_6hr_GOIs.pdf"), width = 10, height = 4)
+ggplot(o6.goi.bar.sum, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ggtitle("OPM2 6hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  geom_errorbar(aes(ymin = TMMcounts - sd, ymax = TMMcounts + sd), width = 0.2, 
+                position = position_dodge(0.9)) + 
+  facet_wrap(vars(hgnc_symbol)) +
+  theme_bw()
+dev.off()
+
+# add gene names
+o24.goi.bar <- merge(o24.goi.box, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+# make summary group for gene + group
+o24.goi.bar$sum.group <- paste(o24.goi.bar$group, o24.goi.bar$hgnc_symbol, sep = "_")
+# get summary stats
+o24.goi.bar.sum <- data_summary(o24.goi.bar, varname = "TMMcounts", groupnames = "sum.group")
+# add variables back individually for plots
+o24.goi.bar.sum$KO <- gsub("_.*", "", o24.goi.bar.sum$sum.group)
+o24.goi.bar.sum$treatment <- gsub("_.*$", "", gsub("^.{4,6}_", "", o24.goi.bar.sum$sum.group))
+o24.goi.bar.sum$treatment <- factor(o24.goi.bar.sum$treatment, levels = c("DMSO", "CCS"))
+o24.goi.bar.sum$hgnc_symbol <- gsub(".*_", "", o24.goi.bar.sum$sum.group)
+
+pdf(file.path(plots.dir, "barplot_OPM2_24hr_GOIs.pdf"), width = 10, height = 4)
+ggplot(o24.goi.bar.sum, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ggtitle("OPM2 24hr GOIs") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  geom_errorbar(aes(ymin = TMMcounts - sd, ymax = TMMcounts + sd), width = 0.2, 
+                position = position_dodge(0.9)) + 
+  facet_wrap(vars(hgnc_symbol)) +
+  theme_bw()
+dev.off()
+```
+
+# write out raw counts & norm counts w/gene names for Ollie/Tim
+```{r}
+write.table(
+  dge$counts,
+  file.path(res.dir, "raw_counts_exp_filtered_all.txt"),
+  sep = "\t",
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+)
+
+# get norm counts
+dge.cpm <- as.data.frame(cpm(dge, log = FALSE))
+# add gene names  
+dge.cpm$ensg <- rownames(dge.cpm)
+dge.cpm <- merge(dge.cpm, bm.ann, by.x = "ensg", by.y = "ensembl_gene_id")
+# reorder to put all gene info in first columns
+dge.cpm <- dge.cpm[, c(1, 150:151, 2:149)]
+# write out
+write.table(
+  dge.cpm,
+  file.path(res.dir, "norm_counts_exp_filtered_all.txt"), 
+  sep = "\t",
+  row.names = FALSE,
+  col.names = TRUE,
+  quote = FALSE
+)
+```
+
+# write out data for merged rep heatmaps w/deg groups for Ollie
+```{r}
+m6.heat.merged <- as.data.frame(m6.heat.merged)
+m6.heat.merged$deg_group <- m6.heat$deg_group
+write.table(
+  m6.heat.merged,
+  file.path(res.dir, "MOLM13_6hr_mergedRep_heatmap_data.txt"),
+  sep = "\t", 
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+)
+
+m24.heat.merged <- as.data.frame(m24.heat.merged)
+m24.heat.merged$deg_group <- m24.heat$deg_group
+write.table(
+  m24.heat.merged,
+  file.path(res.dir, "MOLM13_24hr_mergedRep_heatmap_data.txt"),
+  sep = "\t", 
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+)
+
+o6.heat.merged <- as.data.frame(o6.heat.merged)
+o6.heat.merged$deg_group <- o6.heat$deg_group
+write.table(
+  o6.heat.merged,
+  file.path(res.dir, "OPM2_24hr_mergedRep_heatmap_data.txt"),
+  sep = "\t", 
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+)
+
+o24.heat.merged <- as.data.frame(o24.heat.merged)
+o24.heat.merged$deg_group <- o24.heat$deg_group
+write.table(
+  o24.heat.merged,
+  file.path(res.dir, "OPM2_24hr_mergedRep_heatmap_data.txt"),
+  sep = "\t", 
+  col.names = NA,
+  row.names = TRUE,
+  quote = FALSE
+)
+```
+
+# use Ollie's genes for each 24h group which are DE in same direction for CCS + >=2 INO80 KOs
+# then make boxplots and violins for each direction, both LFC and norm counts versions
+```{r}
+# import molm13 phenocopyied gene list
+molm.pg <- scan(file.path(ref.dir, "MOLM13_Phenocopied_genes.txt"), what = character(), sep = "\t")
+
+# make boxplot as before but narrowed to this list (all sig in safe at 24h)
+m24.pg.lfc.box.data <- m24.lfc.box.data %>% filter(hgnc_symbol %in% molm.pg)
+# remove 1 duplicated
+m24.pg.lfc.box.data <- m24.pg.lfc.box.data[-which(duplicated(m24.pg.lfc.box.data)), ]
+
+pdf(file.path(plots.dir, "violin_MOLM13_24hr_phenocopiedGenes_LFC.pdf"))
+ggplot(m24.pg.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("MOLM13 24hr phenocopied genes") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+#  geom_jitter(color = "black", size = 0.4, alpha = 0.9) +
+  theme_bw()
+dev.off()
+
+# import molm13 phenocopyied gene list
+opm.pg <- scan(file.path(ref.dir, "OPM2_Phenocopied_genes.txt"), what = character(), sep = "\t")
+
+# make boxplot as before but narrowed to this list (all sig in safe at 24h)
+o24.pg.lfc.box.data <- o24.lfc.box.data %>% filter(hgnc_symbol %in% opm.pg)
+
+pdf(file.path(plots.dir, "violin_OPM2_24hr_phenocopiedGenes_LFC.pdf"))
+ggplot(o24.pg.lfc.box.data, aes(x = comp_group, y = logFC, fill = deg_group)) +
+  geom_violin() +
+  ggtitle("OPM2 24hr phenocopied genes") +
+  scale_fill_manual(values = c("#006d72", "#cc0000")) +
+#  geom_jitter(color = "black", size = 0.4, alpha = 0.9) +
+  theme_bw()
+dev.off()
+
+# now for norm counts
+# get norm counts by group limited to pehnocopied genes 
+m24.pg.counts <- dge$counts[which(dge$genes$Symbol %in% molm.pg), m24.samples]
+m24.pg.counts <- as.matrix(m24.pg.counts)
+# normalise by TMMs
+m24.pg.counts <- m24.pg.counts %*% diag(dge$samples$norm.factors[m24.samples])
+# add colnames
+colnames(m24.pg.counts) <- dge$samples$Sample_Name[m24.samples]
+# transform to long
+m24.pg.box <- melt(m24.pg.counts)
+# rename cols
+colnames(m24.pg.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+m24.pg.box$group <- gsub("MV411_", "", gsub("_24hr_[1-3]$", "", m24.pg.box$group))
+# add treatment group for colours
+m24.pg.box$treatment <- gsub(".*_", "", m24.pg.box$group)
+# set order w/DMSo first
+m24.pg.box$treatment <- factor(m24.pg.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+m24.pg.box$KO <- gsub("_.*", "", m24.pg.box$group)
+
+pdf(file.path(plots.dir, "violin_MOLM13_24hr_phenocopiedGenes_TMMcounts.pdf"))
+ggplot(m24.pg.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("MOLM13 24hr phenocopied genes") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  ylim(0, 2500) +
+  theme_bw()
+dev.off()
+
+# get norm counts by group limited to pehnocopied genes 
+o24.pg.counts <- dge$counts[which(dge$genes$Symbol %in% opm.pg), o24.samples]
+o24.pg.counts <- as.matrix(o24.pg.counts)
+# normalise by TMMs
+o24.pg.counts <- o24.pg.counts %*% diag(dge$samples$norm.factors[o24.samples])
+# add colnames
+colnames(o24.pg.counts) <- dge$samples$Sample_Name[o24.samples]
+# transform to long
+o24.pg.box <- melt(o24.pg.counts)
+# rename cols
+colnames(o24.pg.box) <- c("ensg", "group", "TMMcounts")
+# change sample name to group 
+o24.pg.box$group <- gsub("OPM2_", "", gsub("_24hr_[1-3]$", "", o24.pg.box$group))
+# add treatment group for colours
+o24.pg.box$treatment <- gsub(".*_", "", o24.pg.box$group)
+# set order w/DMSo first
+o24.pg.box$treatment <- factor(o24.pg.box$treatment, levels = c("DMSO", "CCS"))
+# make KO group
+o24.pg.box$KO <- gsub("_.*", "", o24.pg.box$group)
+
+pdf(file.path(plots.dir, "violin_OPM2_24hr_phenocopiedGenes_TMMcounts.pdf"))
+ggplot(o24.pg.box, aes(x = KO, y = TMMcounts, fill = treatment)) +
+  geom_violin() +
+  ggtitle("OPM2 24hr phenocopied genes") +
+  scale_fill_manual(values = c("mediumpurple4", "darkorange3")) +
+  ylim(0, 2500) +
+  theme_bw()
+dev.off()
+```
+
+# make scatterplots of each KO & safe DMO all compared against all w/corr stats
+```{r}
+# mkdir for scatterplots as there will be 100
+scat.dir <- file.path(plots.dir, "scatter")
+#dir.create(scat.dir)
+
+# average counts across reps for DMSO
+m6.cor <- data.frame(
+  "MV411_Safe_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_Safe_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_UCHL5_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_UCHL5_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_TFPT_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_TFPT_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_INO80E_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80E_DMSO_6hr", colnames(m6.heat))]),
+  "MV411_INO80_DMSO_6hr" = rowMeans(m6.heat[, grepl("MV411_INO80_DMSO_6hr", colnames(m6.heat))])
+  )
+
+# loop through each sample within each sample and make corr scatterplot
+for(x.i in 1:5){
+  for(y.i in 1:5){
+    ct <- cor.test(m6.cor[, x.i], m6.cor[, y.i])
+    pdf(file.path(scat.dir, paste0("scatter_", colnames(m6.cor[x.i]), "_v_", colnames(m6.cor[y.i]), ".pdf")))
+    plot(
+      m6.cor[, x.i], 
+      m6.cor[, y.i], 
+      col = rgb(0.4, 0.4, 0.8, 0.6),
+      xlim = c(0, 5000),
+      ylim = c(0, 5000),
+      xlab = colnames(m6.cor[x.i]),
+      ylab = colnames(m6.cor[y.i])
+      )
+#    abline(lm(m6.cor[, y.i] ~ m6.cor[, x.i]), col = "red")
+    abline(a = 0, b = 1, col = "red")
+    text(500, 4500, paste0("R = ", round(ct$estimate, 4)))
+    text(500, 4000, paste0("p <= ", ct$p.value))
+    dev.off()
+  }
+}
+
+m24.cor <- data.frame(
+  "MV411_Safe_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_Safe_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_UCHL5_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_UCHL5_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_TFPT_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_TFPT_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80E_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80E_DMSO_24hr", colnames(m24.heat))]),
+  "MV411_INO80_DMSO_24hr" = rowMeans(m24.heat[, grepl("MV411_INO80_DMSO_24hr", colnames(m24.heat))])
+)
+
+# loop through each sample within each sample and make corr scatterplot
+for(x.i in 1:5){
+  for(y.i in 1:5){
+    ct <- cor.test(m24.cor[, x.i], m24.cor[, y.i])
+    pdf(file.path(scat.dir, paste0("scatter_", colnames(m24.cor[x.i]), "_v_", colnames(m24.cor[y.i]), ".pdf")))
+    plot(
+      m24.cor[, x.i], 
+      m24.cor[, y.i], 
+      col = rgb(0.4, 0.4, 0.8, 0.6),
+      xlim = c(0, 5000),
+      ylim = c(0, 5000),
+      xlab = colnames(m24.cor[x.i]),
+      ylab = colnames(m24.cor[y.i])
+      )
+#    abline(lm(m24.cor[, y.i] ~ m24.cor[, x.i]), col = "red")
+    abline(a = 0, b = 1, col = "red")
+    text(500, 4500, paste0("R = ", round(ct$estimate, 4)))
+    text(500, 4000, paste0("p <= ", ct$p.value))
+    dev.off()
+  }
+}
+
+o6.cor <- data.frame(
+  "OPM2_Safe_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_Safe_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_UCHL5_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_UCHL5_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_TFPT_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_TFPT_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_INO80E_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80E_DMSO_6hr", colnames(o6.heat))]),
+  "OPM2_INO80_DMSO_6hr" = rowMeans(o6.heat[, grepl("OPM2_INO80_DMSO_6hr", colnames(o6.heat))])
+)
+
+# loop through each sample within each sample and make corr scatterplot
+for(x.i in 1:5){
+  for(y.i in 1:5){
+    ct <- cor.test(o6.cor[, x.i], o6.cor[, y.i])
+    pdf(file.path(scat.dir, paste0("scatter_", colnames(o6.cor[x.i]), "_v_", colnames(o6.cor[y.i]), ".pdf")))
+    plot(
+      o6.cor[, x.i], 
+      o6.cor[, y.i], 
+      col = rgb(0.4, 0.4, 0.8, 0.6),
+      xlim = c(0, 5000),
+      ylim = c(0, 5000),
+      xlab = colnames(o6.cor[x.i]),
+      ylab = colnames(o6.cor[y.i])
+      )
+#    abline(lm(o6.cor[, y.i] ~ o6.cor[, x.i]), col = "red")
+    abline(a = 0, b = 1, col = "red")
+    text(500, 4500, paste0("R = ", round(ct$estimate, 4)))
+    text(500, 4000, paste0("p <= ", ct$p.value))
+    dev.off()
+  }
+}
+
+o24.cor <- data.frame(
+  "OPM2_Safe_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_Safe_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_UCHL5_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_UCHL5_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_TFPT_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_TFPT_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80E_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80E_DMSO_24hr", colnames(o24.heat))]),
+  "OPM2_INO80_DMSO_24hr" = rowMeans(o24.heat[, grepl("OPM2_INO80_DMSO_24hr", colnames(o24.heat))])
+  )
+
+# loop through each sample within each sample and make corr scatterplot
+for(x.i in 1:5){
+  for(y.i in 1:5){
+    ct <- cor.test(o24.cor[, x.i], o24.cor[, y.i])
+    pdf(file.path(scat.dir, paste0("scatter_", colnames(o24.cor[x.i]), "_v_", colnames(o24.cor[y.i]), ".pdf")))
+    plot(
+      o24.cor[, x.i], 
+      o24.cor[, y.i], 
+      col = rgb(0.4, 0.4, 0.8, 0.6),
+      xlim = c(0, 5000),
+      ylim = c(0, 5000),
+      xlab = colnames(o24.cor[x.i]),
+      ylab = colnames(o24.cor[y.i])
+      )
+#    abline(lm(o24.cor[, y.i] ~ o24.cor[, x.i]), col = "red")
+    abline(a = 0, b = 1, col = "red")
+    text(500, 4500, paste0("R = ", round(ct$estimate, 4)))
+    text(500, 4000, paste0("p <= ", ct$p.value))
+    dev.off()
+  }
+}
+```
+
+# now look at genes that are sig in safe + all KOs, but greater |LFC| in KOs
+```{r}
+# get degs for all CCSvDMSO comps
+m6.all.deg <- Reduce(intersect, list(
+  ftest.list$MV411_Safe_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_Safe_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80E_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_TFPT_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_CCS_6hrvsDMSO$table$QValue < 0.05)]
+))
+# remove blank hgnc names
+m6.all.deg <- m6.all.deg[-which(m6.all.deg == "")]
+
+o6.all.deg <- Reduce(intersect, list(
+  ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_CCS_6hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_CCS_6hrvsDMSO$table$QValue < 0.05)]
+)) 
+# remove blank hgnc names
+o6.all.deg <- o6.all.deg[-which(o6.all.deg == "")]
+
+m24.all.deg <- Reduce(intersect, list(
+  ftest.list$MV411_Safe_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_Safe_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_INO80E_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_TFPT_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$MV411_UCHL5_CCS_24hrvsDMSO$table$QValue < 0.05)]
+))
+# remove blank hgnc names
+m24.all.deg <- m24.all.deg[-which(m24.all.deg == "")]
+
+o24.all.deg <- Reduce(intersect, list(
+  ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_INO80E_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_TFPT_CCS_24hrvsDMSO$table$QValue < 0.05)],
+  ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table$hgnc_symbol[which(ftest.list$OPM2_UCHL5_CCS_24hrvsDMSO$table$QValue < 0.05)]
+))
+# remove blank hgnc names
+o24.all.deg <- o24.all.deg[-which(o24.all.deg == "")]
+
+# compile table of LFCs for each condition for each gene list w/ column for >|LFC| in >=3 KOs
+# init table w/gene name and safe LFC
+m6.all.deg.table <- ftest.list$MV411_Safe_CCS_6hrvsDMSO$table[which(ftest.list$MV411_Safe_CCS_6hrvsDMSO$table$hgnc_symbol %in% m6.all.deg), c(6, 2)]
+# rename LFC w/ cell cond
+colnames(m6.all.deg.table)[2] <- "Safe_logFC"
+# rmv dups
+m6.all.deg.table <- m6.all.deg.table[-duplicated(m6.all.deg.table$hgnc_symbol), ]
+# make variable for colnames
+ko.names <- c("Safe", "UCHL5", "TFPT", "INO80E", "INO80")
+ko.cols <- c(2, 3, 5, 7, 9)
+# for each KO add LFC and logical for comparison to safe
+for(f.i in 2:5){
+  ko.deg.lfc <- m6.drug.ftest.list[[f.i]]$table[which(m6.drug.ftest.list[[f.i]]$table$hgnc_symbol %in% m6.all.deg.table$hgnc_symbol), c(6, 2)]
+  m6.all.deg.table <- merge(m6.all.deg.table, ko.deg.lfc)
+  ko.lfc <- abs(m6.all.deg.table[ko.cols[f.i]]) > abs(m6.all.deg.table$Safe_logFC)
+  m6.all.deg.table <- cbind(m6.all.deg.table, ko.lfc)
+  colnames(m6.all.deg.table)[c(ko.cols[f.i], ko.cols[f.i] + 1)] <- c(paste0(ko.names[f.i], "_logFC"), paste0(ko.names[f.i], "_LFCcomp"))
+}
+# add column for >safe in at least 3 KOs
+m6.all.deg.table$LFCcomp_3KOs <- rowSums(m6.all.deg.table[, c(4, 6, 8, 10)]) >= 3
+# write out table
+write.table(
+  m6.all.deg.table,
+  file.path(res.dir, "MOLM13_6hr_all_CCSvDMSO_DEGs_LFCcomp.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# init table w/gene name and safe LFC
+m24.all.deg.table <- ftest.list$MV411_Safe_CCS_24hrvsDMSO$table[which(ftest.list$MV411_Safe_CCS_24hrvsDMSO$table$hgnc_symbol %in% m24.all.deg), c(6, 2)]
+# rename LFC w/ cell cond
+colnames(m24.all.deg.table)[2] <- "Safe_logFC"
+# rmv dups
+m24.all.deg.table <- m24.all.deg.table[-duplicated(m24.all.deg.table$hgnc_symbol), ]
+
+# for each KO add LFC and logical for comparison to safe
+for(f.i in 2:5){
+  ko.deg.lfc <- m24.drug.ftest.list[[f.i]]$table[which(m24.drug.ftest.list[[f.i]]$table$hgnc_symbol %in% m24.all.deg.table$hgnc_symbol), c(6, 2)]
+  m24.all.deg.table <- merge(m24.all.deg.table, ko.deg.lfc)
+  ko.lfc <- abs(m24.all.deg.table[ko.cols[f.i]]) > abs(m24.all.deg.table$Safe_logFC)
+  m24.all.deg.table <- cbind(m24.all.deg.table, ko.lfc)
+  colnames(m24.all.deg.table)[c(ko.cols[f.i], ko.cols[f.i] + 1)] <- c(paste0(ko.names[f.i], "_logFC"), paste0(ko.names[f.i], "_LFCcomp"))
+}
+# add column for >safe in at least 3 KOs
+m24.all.deg.table$LFCcomp_3KOs <- rowSums(m24.all.deg.table[, c(4, 6, 8, 10)]) >= 3
+# write out table
+write.table(
+  m24.all.deg.table,
+  file.path(res.dir, "MOLM13_24hr_all_CCSvDMSO_DEGs_LFCcomp.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# init table w/gene name and safe LFC
+o6.all.deg.table <- ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table[which(ftest.list$OPM2_Safe_CCS_6hrvsDMSO$table$hgnc_symbol %in% o6.all.deg), c(6, 2)]
+# rename LFC w/ cell cond
+colnames(o6.all.deg.table)[2] <- "Safe_logFC"
+# rmv dups
+o6.all.deg.table <- o6.all.deg.table[-duplicated(o6.all.deg.table$hgnc_symbol), ]
+
+# for each KO add LFC and logical for comparison to safe
+for(f.i in 2:5){
+  ko.deg.lfc <- o6.drug.ftest.list[[f.i]]$table[which(o6.drug.ftest.list[[f.i]]$table$hgnc_symbol %in% o6.all.deg.table$hgnc_symbol), c(6, 2)]
+  o6.all.deg.table <- merge(o6.all.deg.table, ko.deg.lfc)
+  ko.lfc <- abs(o6.all.deg.table[ko.cols[f.i]]) > abs(o6.all.deg.table$Safe_logFC)
+  o6.all.deg.table <- cbind(o6.all.deg.table, ko.lfc)
+  colnames(o6.all.deg.table)[c(ko.cols[f.i], ko.cols[f.i] + 1)] <- c(paste0(ko.names[f.i], "_logFC"), paste0(ko.names[f.i], "_LFCcomp"))
+}
+# add column for >safe in at least 3 KOs
+o6.all.deg.table$LFCcomp_3KOs <- rowSums(o6.all.deg.table[, c(4, 6, 8, 10)]) >= 3
+# write out table
+write.table(
+  o6.all.deg.table,
+  file.path(res.dir, "OPM2_6hr_all_CCSvDMSO_DEGs_LFCcomp.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# init table w/gene name and safe LFC
+o24.all.deg.table <- ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table[which(ftest.list$OPM2_Safe_CCS_24hrvsDMSO$table$hgnc_symbol %in% o24.all.deg), c(6, 2)]
+# rename LFC w/ cell cond
+colnames(o24.all.deg.table)[2] <- "Safe_logFC"
+# rmv dups
+o24.all.deg.table <- o24.all.deg.table[-duplicated(o24.all.deg.table$hgnc_symbol), ]
+
+# for each KO add LFC and logical for comparison to safe
+for(f.i in 2:5){
+  ko.deg.lfc <- o24.drug.ftest.list[[f.i]]$table[which(o24.drug.ftest.list[[f.i]]$table$hgnc_symbol %in% o24.all.deg.table$hgnc_symbol), c(6, 2)]
+  o24.all.deg.table <- merge(o24.all.deg.table, ko.deg.lfc)
+  ko.lfc <- abs(o24.all.deg.table[ko.cols[f.i]]) > abs(o24.all.deg.table$Safe_logFC)
+  o24.all.deg.table <- cbind(o24.all.deg.table, ko.lfc)
+  colnames(o24.all.deg.table)[c(ko.cols[f.i], ko.cols[f.i] + 1)] <- c(paste0(ko.names[f.i], "_logFC"), paste0(ko.names[f.i], "_LFCcomp"))
+}
+# add column for >safe in at least 3 KOs
+o24.all.deg.table$LFCcomp_3KOs <- rowSums(o24.all.deg.table[, c(4, 6, 8, 10)]) >= 3
+# write out table
+write.table(
+  o24.all.deg.table,
+  file.path(res.dir, "OPM2_24hr_all_CCSvDMSO_DEGs_LFCcomp.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_MACseq_240521.txt"))
+)
+```
