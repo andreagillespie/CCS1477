@@ -1,0 +1,28 @@
+---
+title: "ChIPseq_250415"
+author: "Andrea"
+date: "2025/04/28"
+output: html_document
+---
+
+fastq location: /pipeline/Runs/NextSeq/250415_VH01624_282_AACN7JWHV/ProjectFolders/Project_Oliver-Sinclair/
+project directory: /dawson_genomics/Projects/CCS1477/ChIP_250415/
+
+# ***Initial analysis was done by Chih in this dir: 
+# /dawson_genomics/Projects/BRD4/ChIP_250423 so I moved it to the project dir 
+# above as it is part of this project
+
+# no peaks called in DMSO-NEG-H2A, making plots over H2AZ & H2AZac peaks
+```{bash}
+sbatch scripts/DTMatrix_H2A_H2AZpeaks.sbatch
+sbatch scripts/DTMatrix_H2A_H2AZacpeaks.sbatch
+
+sbatch scripts/DTMatrix_H2AZ_H2AZpeaks.sbatch
+sbatch scripts/DTMatrix_H2AZ_H2AZacpeaks.sbatch
+
+sbatch scripts/DTMatrix_H2AZac_H2AZpeaks.sbatch
+sbatch scripts/DTMatrix_H2AZac_H2AZacpeaks.sbatch
+```
+
+# Really interesting results but they are n=1 and coverage is low because marks
+# are so prevalent, experiment to be repeated with higher coverage and n=2
