@@ -1,0 +1,281 @@
+---
+title: "ChIPseq_250612"
+author: "Andrea"
+date: "2025/06/16"
+output: html_document
+---
+
+fastq location: /pipeline/Runs/NextSeq/250612_VH01624_308_222CT7MNX/ProjectFolders/Project_Oliver-Sinclair/
+project directory: /dawson_genomics/Projects/CCS1477/ChIP_250612/
+
+# set up project dir and process (fastqc, trim, align, tdfs)
+```{bash}
+mkdir alignment
+mkdir fastqc
+mkdir fastq_screen
+mkdir trimmed_fastqs
+mkdir logs
+mkdir scripts
+mkdir tdfs
+
+for fq in /pipeline/Runs/NextSeq/250612_VH01624_308_222CT7MNX/ProjectFolders/Project_Oliver-Sinclair/Sample*/*_R1_001.fastq.gz
+do
+sbatch scripts/alignHg38.sbatch $fq
+done
+
+# run multiqc to collate reports
+module load py-multiqc/1.15-gcc-13.2.0
+multiqc .
+```
+
+# peak calling (both narrow and broad) include bedgraph output for Spark plots and diff peaks if needed
+```{bash}
+mkdir -p macs/narrowpeaks
+mkdir -p macs/broadpeaks
+
+for bam in alignment/ChIP-[CD]-[NP][EO][GS]-[1-3]*sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/ChIP-D-NEG-Inp-49_S168.sort.rmdup.bam
+done
+```
+
+# make bigwigs for all
+```{bash}
+mkdir bigwigs
+
+for bam in alignment/*sort.rmdup.bam
+do
+sbatch scripts/DeeptoolsBamCov.sbatch $bam 
+done
+```
+
+# make heatmaps for all reps of each mark over each of the stacked barplot groups
+```{bash}
+sbatch scripts/DTMatrix_H2A_barGroups.sbatch
+sbatch scripts/DTMatrix_H2AZ_barGroups.sbatch
+sbatch scripts/DTMatrix_H2AZac_barGroups.sbatch
+sbatch scripts/DTMatrix_H2B_barGroups.sbatch
+sbatch scripts/DTMatrix_K7_barGroups.sbatch
+```
+
+# also make plots at TSS of MANE genes
+```{bash}
+sbatch scripts/DTMatrix_H2A_MANE_TSS.sbatch
+sbatch scripts/DTMatrix_H2AZ_MANE_TSS.sbatch
+sbatch scripts/DTMatrix_H2AZac_MANE_TSS.sbatch
+sbatch scripts/DTMatrix_H2B_MANE_TSS.sbatch
+sbatch scripts/DTMatrix_K7_MANE_TSS.sbatch
+```
+
+# merge rep bams and get bigwigs
+```{bash}
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-K7 \
+  ChIP-C-NEG-1-K7-30_S148.sort.rmdup.bam \
+  ChIP-C-NEG-2-K7-38_S156.sort.rmdup.bam 
+# leaving our rep 3 bc it was problematic
+  
+sbatch scripts/mergeBamCov.sbatch CCS-POS-K7 \
+  ChIP-C-POS-1-K7-32_S150.sort.rmdup.bam \
+  ChIP-C-POS-2-K7-40_S159.sort.rmdup.bam \
+  ChIP-C-POS-3-K7-48_S167.sort.rmdup.bam 
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-K7 \
+  ChIP-D-NEG-1-K7-26_S143.sort.rmdup.bam \
+  ChIP-D-NEG-2-K7-34_S152.sort.rmdup.bam \
+  ChIP-D-NEG-3-K7-42_S161.sort.rmdup.bam 
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-K7 \
+  ChIP-D-POS-1-K7-28_S145.sort.rmdup.bam \
+  ChIP-D-POS-2-K7-36_S154.sort.rmdup.bam \
+  ChIP-D-POS-3-K7-44_S163.sort.rmdup.bam
+  
+  
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-H2B \
+  ChIP-C-NEG-2-H2B-37_S155.sort.rmdup.bam \
+  ChIP-C-NEG-3-H2B-45_S164.sort.rmdup.bam
+# leaving out rep 1 bc it was problematic
+  
+sbatch scripts/mergeBamCov.sbatch CCS-POS-H2B \
+  ChIP-C-POS-1-H2B-31_S149.sort.rmdup.bam \
+  ChIP-C-POS-2-H2B-39_S157.sort.rmdup.bam \
+  ChIP-C-POS-3-H2B-47_S166.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-H2B \
+  ChIP-D-NEG-1-H2B-25_S142.sort.rmdup.bam \
+  ChIP-D-NEG-2-H2B-33_S151.sort.rmdup.bam \
+  ChIP-D-NEG-3-H2B-41_S160.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-H2B \
+  ChIP-D-POS-1-H2B-27_S144.sort.rmdup.bam \
+  ChIP-D-POS-2-H2B-35_S153.sort.rmdup.bam \
+  ChIP-D-POS-3-H2B-43_S162.sort.rmdup.bam
+  
+  
+### updated to include reps from previous sequencing run, changed variable 4 to 
+# accept files from any directory
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-H2AZac \
+  ChIP-C-NEG-2-H2AZac-8_S174.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-NEG-H2AZac-9_S102.sort.rmdup.bam
+# leave out problematic rep 3
+  
+sbatch scripts/mergeBamCov.sbatch CCS-POS-H2AZac \
+  ChIP-C-POS-2-H2AZac-11_S127.sort.rmdup.bam \
+  ChIP-C-POS-3-H2AZac-23_S140.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-POS-H2AZac-12_S89.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-H2AZac \
+  ChIP-D-NEG-2-H2AZac-2_S147.sort.rmdup.bam \
+  ChIP-D-NEG-3-H2AZac-14_S130.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-NEG-H2AZac-3_S96.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-H2AZac \
+  ChIP-D-POS-2-H2AZac-5_S171.sort.rmdup.bam \
+  ChIP-D-POS-3-H2AZac-17_S133.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-POS-H2AZac-6_S99.sort.rmdup.bam
+  
+  
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-H2AZ \
+  ChIP-C-NEG-2-H2AZ-9_S175.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-NEG-H2AZ-8_S101.sort.rmdup.bam
+# leave out problematic rep 3
+  
+sbatch scripts/mergeBamCov.sbatch CCS-POS-H2AZ \
+  ChIP-C-POS-2-H2AZ-12_S128.sort.rmdup.bam \
+  ChIP-C-POS-3-H2AZ-24_S141.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-POS-H2AZ-11_S88.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-H2AZ \
+  ChIP-D-NEG-2-H2AZ-3_S158.sort.rmdup.bam \
+  ChIP-D-NEG-3-H2AZ-15_S131.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-NEG-H2AZ-2_S95.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-H2AZ \
+  ChIP-D-POS-2-H2AZ-6_S172.sort.rmdup.bam \
+  ChIP-D-POS-3-H2AZ-18_S134.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-POS-H2AZ-5_S98.sort.rmdup.bam
+  
+
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-H2A \
+  ChIP-C-NEG-2-H2A-7_S173.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-NEG-H2A-7_S100.sort.rmdup.bam
+# leave out problematic rep 3
+  
+sbatch scripts/mergeBamCov.sbatch CCS-POS-H2A \
+  ChIP-C-POS-2-H2A-10_S126.sort.rmdup.bam \
+  ChIP-C-POS-3-H2A-22_S139.sort.rmdup.bam \
+  ../ChIP_250415/alignment/CCS-POS-H2A-10_S87.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-H2A \
+  ChIP-D-NEG-2-H2A-1_S136.sort.rmdup.bam \
+  ChIP-D-NEG-3-H2A-13_S129.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-NEG-H2A-1_S94.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-H2A \
+  ChIP-D-POS-2-H2A-4_S169.sort.rmdup.bam \
+  ChIP-D-POS-3-H2A-16_S132.sort.rmdup.bam \
+  ../ChIP_250415/alignment/DMSO-POS-H2A-4_S97.sort.rmdup.bam
+```
+
+# one sample that MGC resequenced run through processing pipeline
+```{bash}
+sbatch scripts/alignHg38.sbatch /pipeline/Runs/NextSeq/250623_VH01624_313_AACWGCTHV/ProjectFolders/Project_Oliver-Sinclair/Sample_ChIP-C-NEG-3-K7-46/ChIP-C-NEG-3-K7-46_S10_R1_001.fastq.gz
+```
+### new sample had quality that was just as bad so this one will be left out also
+
+# make merged rep plots leaving out 1 problematic rep from each set of marks
+```{bash}
+sbatch scripts/DTMatrix_H2A_barGroups_merged-1.sbatch
+sbatch scripts/DTMatrix_H2AZ_barGroups_merged-1.sbatch
+sbatch scripts/DTMatrix_H2AZac_barGroups_merged-1.sbatch
+sbatch scripts/DTMatrix_H2B_barGroups_merged-1.sbatch
+sbatch scripts/DTMatrix_K7_barGroups_merged-1.sbatch
+```
+
+# make ratio bigwigs of H2AZac/H2AZ and the bar groups plots
+```{bash}
+sbatch scripts/DeeptoolsBamComp.sbatch CCS-NEG-H2AZac.merged.sort.bam \
+  CCS-NEG-H2AZ.merged.sort.bam \
+  CCS-NEG-H2AZac_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch CCS-POS-H2AZac.merged.sort.bam \
+  CCS-POS-H2AZ.merged.sort.bam \
+  CCS-POS-H2AZac_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch DMSO-NEG-H2AZac.merged.sort.bam \
+  DMSO-NEG-H2AZ.merged.sort.bam \
+  DMSO-NEG-H2AZac_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch DMSO-POS-H2AZac.merged.sort.bam \
+  DMSO-POS-H2AZ.merged.sort.bam \
+  DMSO-POS-H2AZac_H2AZ
+  
+sbatch scripts/DTMat_H2AZac_H2AZ_LFC.sbatch
+```
+
+# now make ratio bigwigs of K7/H2AZ and the bar groups plots
+```{bash}
+sbatch scripts/DeeptoolsBamComp.sbatch CCS-NEG-K7.merged.sort.bam \
+  CCS-NEG-H2AZ.merged.sort.bam \
+  CCS-NEG-K7_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch CCS-POS-K7.merged.sort.bam \
+  CCS-POS-H2AZ.merged.sort.bam \
+  CCS-POS-K7_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch DMSO-NEG-K7.merged.sort.bam \
+  DMSO-NEG-H2AZ.merged.sort.bam \
+  DMSO-NEG-K7_H2AZ
+  
+sbatch scripts/DeeptoolsBamComp.sbatch DMSO-POS-K7.merged.sort.bam \
+  DMSO-POS-H2AZ.merged.sort.bam \
+  DMSO-POS-K7_H2AZ
+  
+sbatch scripts/DTMat_K7_H2AZ_LFC.sbatch
+```
+
+# look at heatmap at TSS of genes active in steady state from RNAseq data
+# get RNAseq data, subset to top 25% of genes w/transcription & make bed
+```{r}
+# get TMM counts
+rna.counts <- fread("/dawson_genomics/Projects/CCS1477/RNAseq_241212/results/TMMnorm_counts.txt")
+
+# limit to steady state samples
+rna.counts <- rna.counts[, c(1, 8:10)]
+
+# require minimal evidence of transcription at steady state
+rna.counts <- rna.counts[which(rowSums(rna.counts[, 2:4] >= 10) >= 2), ]
+
+# take top 25% expressed averaged across reps
+rna.counts$TMM_mean <- rowMeans(rna.counts[, 2:4])
+rna.counts <- rna.counts[order(rna.counts$TMM_mean, decreasing = TRUE), ]
+nrow(rna.counts)/4
+[1] 2870.5
+rna.top <- rna.counts[1:2871, ]
+
+# get DT bed file and subset to rna.top genes
+dt.bed <- fread("/data/reference/dawson_labs/bed_files/Hg38/Hg38EnsGeneDT.bed")
+rna.dt.bed <- dt.bed[which( dt.bed$V5 %in% rna.top$V1)]
+
+# write out bed file
+write.table(
+  rna.dt.bed,
+  "/dawson_genomics/Projects/CCS1477/ChIP_250612/bed_files/top_expressed_steadystate.bed",
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+# make heatmaps over above TSSs
+```{bash}
+# look at each mark here
+sbatch scripts/DTMatrix_H2AZ_topExpTSS.sbatch
+sbatch scripts/DTMatrix_H2AZac_topExpTSS.sbatch
+sbatch scripts/DTMatrix_H2A_topExpTSS.sbatch
+sbatch scripts/DTMatrix_H2B_topExpTSS.sbatch
+sbatch scripts/DTMatrix_K7_topExpTSS.sbatch
+
+# also for H2AZac/H2AZ ratio
+sbatch scripts/DTMat_H2AZac_H2AZ_LFC_topExpTSS.sbatch
+```
