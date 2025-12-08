@@ -1,0 +1,300 @@
+---
+title: "ChIPseq_250804"
+author: "Andrea"
+date: "2025/08/25"
+output: html_document
+---
+
+fastq location: /pipeline/Runs/NextSeq/250804_VH01624_331_222CKHGNX/ProjectFolders/Project_Oliver-Sinclair/
+project directory: /dawson_genomics/Projects/CCS1477/ChIP_250804/
+
+# set up project dir and process (fastqc, trim, align, tdfs)
+```{bash}
+mkdir alignment
+mkdir fastqc
+mkdir fastq_screen
+mkdir trimmed_fastqs
+mkdir logs
+mkdir scripts
+mkdir tdfs
+
+for fq in  /pipeline/Runs/NextSeq/250804_VH01624_331_222CKHGNX/ProjectFolders/Project_Oliver-Sinclair/Sample*/*_R1_001.fastq.gz
+do
+sbatch scripts/alignHg38BDGP6.sbatch $fq
+done
+```
+
+# peak calling (both narrow and broad) include bedgraph output for Spark plots and diff peaks if needed
+```{bash}
+mkdir -p macs/narrowpeaks
+mkdir -p macs/broadpeaks
+
+for bam in alignment/CCS-NEG-K*[0-9].sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/CCS-NEG-INP-27_S39.sort.rmdup.bam
+done
+
+for bam in alignment/CCS-POS-K*[0-9].sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/CCS-POS-INP-28_S40.sort.rmdup.bam
+done
+
+for bam in alignment/DMSO-NEG-K*[0-9].sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/DMSO-NEG-INP-25_S37.sort.rmdup.bam
+done
+
+for bam in alignment/DMSO-POS-K*[0-9].sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/DMSO-POS-INP-26_S38.sort.rmdup.bam
+done
+
+# run multiqc to collate reports
+module load py-multiqc/1.15-gcc-13.2.0
+multiqc .
+```
+
+# make RPGC norm bigwigs for all
+```{bash}
+mkdir bigwigs
+
+for bam in alignment/*[0-9].sort.rmdup.bam
+do
+sbatch scripts/DeeptoolsBamCov.sbatch $bam 
+done
+```
+
+# get bam stats for spike in 
+```{bash}
+module load samtools/1.19.2-gcc-13.2.0
+
+for bam in alignment/*_Dm.sort.rmdup.bam
+do
+echo $bam >> alignment/DmBamFlagstat.txt
+samtools flagstat $bam >> alignment/DmBamFlagstat.txt
+done
+```
+
+# Load R libraries and set paths
+```{r}
+library(data.table)
+
+project.dir <- "/dawson_genomics/Projects/CCS1477/ChIP_250804"
+align.dir <- file.path(project.dir, "alignment")
+peaks.dir <- file.path(project.dir, "macs/broadpeaks")
+```
+
+# collate DM counts, use lib sizes to get scale factor for bigwigs
+```{r}
+dm.stat <- read.table(file.path(align.dir, "DmBamFlagstat.txt"), header = FALSE, fill = TRUE)
+dm.files <- dm.stat[grep("Dm.sort.rmdup.bam",dm.stat$V1), 1]
+dm.reads <- dm.stat[grep("total", t(dm.stat$V5)), 1]
+
+# make text file with bam names and scale factors to use for deeptools
+# scale factor for each is 10000000/Dm reads
+bam.sf <- cbind(gsub("_Dm.sort.rmdup.bam", ".sort.rmdup.bam", dm.files), 10000000/as.numeric(dm.reads))
+write.table(
+  bam.sf,
+  file.path(align.dir, "bam_sf.txt"),
+  sep = ":",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+# make bigwigs norm by spike-in
+```{bash}
+while read -r line
+do
+IFS=: read -r bam sf <<< $line
+sbatch scripts/DeeptoolsBamCovDm.sbatch $bam $sf
+done < alignment/bam_sf.txt
+```
+
+# also make global heatmaps of all reps at TSS of MANE genes for RPGC norm and 
+# spike in norm data
+```{bash}
+sbatch scripts/DTMatrix_K11_MANE_TSS_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_K11_MANE_TSS_Dmnorm.sbatch
+sbatch scripts/DTMatrix_K4_MANE_TSS_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_K4_MANE_TSS_Dmnorm.sbatch
+```
+
+# replicates are very concordant, good to merge, need to merge Dm files first to
+# get merged spike in scale factors
+```{bash}
+sbatch scripts/mergeBamCovDm.sbatch CCS-NEG-K11 \
+  CCS-NEG-K11-R1-15_S26_Dm.sort.rmdup.bam \
+  CCS-NEG-K11-R2-19_S30_Dm.sort.rmdup.bam \
+  CCS-NEG-K11-R3-23_S35_Dm.sort.rmdup.bam
+  
+sbatch scripts/mergeBamCovDm.sbatch CCS-NEG-K4 \
+  CCS-NEG-K4-R1-3_S42_Dm.sort.rmdup.bam \
+  CCS-NEG-K4-R2-7_S46_Dm.sort.rmdup.bam \
+  CCS-NEG-K4-R3-11_S22_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch CCS-POS-K11 \
+  CCS-POS-K11-R1-16_S27_Dm.sort.rmdup.bam \
+  CCS-POS-K11-R2-20_S32_Dm.sort.rmdup.bam \
+  CCS-POS-K11-R3-24_S36_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch CCS-POS-K4 \
+  CCS-POS-K4-R1-4_S43_Dm.sort.rmdup.bam \
+  CCS-POS-K4-R2-8_S47_Dm.sort.rmdup.bam \
+  CCS-POS-K4-R3-12_S23_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch DMSO-NEG-K11 \
+  DMSO-NEG-K11-R1-13_S24_Dm.sort.rmdup.bam \
+  DMSO-NEG-K11-R2-17_S28_Dm.sort.rmdup.bam \
+  DMSO-NEG-K11-R3-21_S33_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch DMSO-NEG-K4 \
+  DMSO-NEG-K4-R1-1_S31_Dm.sort.rmdup.bam \
+  DMSO-NEG-K4-R2-5_S44_Dm.sort.rmdup.bam \
+  DMSO-NEG-K4-R3-9_S48_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch DMSO-POS-K11 \
+  DMSO-POS-K11-R1-14_S25_Dm.sort.rmdup.bam \
+  DMSO-POS-K11-R2-18_S29_Dm.sort.rmdup.bam \
+  DMSO-POS-K11-R3-22_S34_Dm.sort.rmdup.bam
+
+sbatch scripts/mergeBamCovDm.sbatch DMSO-POS-K4 \
+  DMSO-POS-K4-R1-2_S41_Dm.sort.rmdup.bam \
+  DMSO-POS-K4-R2-6_S45_Dm.sort.rmdup.bam \
+  DMSO-POS-K4-R3-10_S21_Dm.sort.rmdup.bam
+```
+
+# get bam stats for merged spike ins
+```{bash}
+module load samtools/1.19.2-gcc-13.2.0
+
+for bam in alignment/*.Dm.merged.sort.bam
+do
+echo $bam >> alignment/DmMergedBamFlagstat.txt
+samtools flagstat $bam >> alignment/DmMergedBamFlagstat.txt
+done
+```
+
+# collate DM counts, use lib sizes to get scale factor for bigwigs
+```{r}
+dm.stat <- read.table(file.path(align.dir, "DmMergedBamFlagstat.txt"), header = FALSE, fill = TRUE)
+dm.files <- dm.stat[grep("Dm.merged.sort.bam",dm.stat$V1), 1]
+dm.reads <- dm.stat[grep("total", t(dm.stat$V5)), 1]
+
+# scale factor for each is 10000000/Dm reads
+bam.sf <- cbind(gsub(".Dm.merged.sort.bam", ".merged.sort.bam", dm.files), 10000000/as.numeric(dm.reads))
+bam.sf
+```
+
+# merge rep bams and get spike in norm bigwigs
+```{bash}
+sbatch scripts/mergeBamCovDmnorm.sbatch CCS-NEG-K11 \
+  CCS-NEG-K11-R1-15_S26.sort.rmdup.bam \
+  CCS-NEG-K11-R2-19_S30.sort.rmdup.bam \
+  CCS-NEG-K11-R3-23_S35.sort.rmdup.bam \
+  0.845766667185404
+  
+sbatch scripts/mergeBamCovDmnorm.sbatch CCS-NEG-K4 \
+  CCS-NEG-K4-R1-3_S42.sort.rmdup.bam \
+  CCS-NEG-K4-R2-7_S46.sort.rmdup.bam \
+  CCS-NEG-K4-R3-11_S22.sort.rmdup.bam \
+  1.18021603854586
+
+sbatch scripts/mergeBamCovDmnorm.sbatch CCS-POS-K11 \
+  CCS-POS-K11-R1-16_S27.sort.rmdup.bam \
+  CCS-POS-K11-R2-20_S32.sort.rmdup.bam \
+  CCS-POS-K11-R3-24_S36.sort.rmdup.bam \
+  1.03685232371566
+
+sbatch scripts/mergeBamCovDmnorm.sbatch CCS-POS-K4 \
+  CCS-POS-K4-R1-4_S43.sort.rmdup.bam \
+  CCS-POS-K4-R2-8_S47.sort.rmdup.bam \
+  CCS-POS-K4-R3-12_S23.sort.rmdup.bam \
+  1.49194676972637
+
+sbatch scripts/mergeBamCovDmnorm.sbatch DMSO-NEG-K11 \
+  DMSO-NEG-K11-R1-13_S24.sort.rmdup.bam \
+  DMSO-NEG-K11-R2-17_S28.sort.rmdup.bam \
+  DMSO-NEG-K11-R3-21_S33.sort.rmdup.bam \
+  1.33315362422479
+
+sbatch scripts/mergeBamCovDmnorm.sbatch DMSO-NEG-K4 \
+  DMSO-NEG-K4-R1-1_S31.sort.rmdup.bam \
+  DMSO-NEG-K4-R2-5_S44.sort.rmdup.bam \
+  DMSO-NEG-K4-R3-9_S48.sort.rmdup.bam \
+  1.54652583796183
+
+sbatch scripts/mergeBamCovDmnorm.sbatch DMSO-POS-K11 \
+  DMSO-POS-K11-R1-14_S25.sort.rmdup.bam \
+  DMSO-POS-K11-R2-18_S29.sort.rmdup.bam \
+  DMSO-POS-K11-R3-22_S34.sort.rmdup.bam \
+  1.32451471436509
+
+sbatch scripts/mergeBamCovDmnorm.sbatch DMSO-POS-K4 \
+  DMSO-POS-K4-R1-2_S41.sort.rmdup.bam \
+  DMSO-POS-K4-R2-6_S45.sort.rmdup.bam \
+  DMSO-POS-K4-R3-10_S21.sort.rmdup.bam \
+  1.44995642155975
+```
+
+# also RPGC normalize merged bams
+```{bash}
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-K11 \
+  CCS-NEG-K11-R1-15_S26.sort.rmdup.bam \
+  CCS-NEG-K11-R2-19_S30.sort.rmdup.bam \
+  CCS-NEG-K11-R3-23_S35.sort.rmdup.bam 
+  
+sbatch scripts/mergeBamCov.sbatch CCS-NEG-K4 \
+  CCS-NEG-K4-R1-3_S42.sort.rmdup.bam \
+  CCS-NEG-K4-R2-7_S46.sort.rmdup.bam \
+  CCS-NEG-K4-R3-11_S22.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch CCS-POS-K11 \
+  CCS-POS-K11-R1-16_S27.sort.rmdup.bam \
+  CCS-POS-K11-R2-20_S32.sort.rmdup.bam \
+  CCS-POS-K11-R3-24_S36.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch CCS-POS-K4 \
+  CCS-POS-K4-R1-4_S43.sort.rmdup.bam \
+  CCS-POS-K4-R2-8_S47.sort.rmdup.bam \
+  CCS-POS-K4-R3-12_S23.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-K11 \
+  DMSO-NEG-K11-R1-13_S24.sort.rmdup.bam \
+  DMSO-NEG-K11-R2-17_S28.sort.rmdup.bam \
+  DMSO-NEG-K11-R3-21_S33.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch DMSO-NEG-K4 \
+  DMSO-NEG-K4-R1-1_S31.sort.rmdup.bam \
+  DMSO-NEG-K4-R2-5_S44.sort.rmdup.bam \
+  DMSO-NEG-K4-R3-9_S48.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-K11 \
+  DMSO-POS-K11-R1-14_S25.sort.rmdup.bam \
+  DMSO-POS-K11-R2-18_S29.sort.rmdup.bam \
+  DMSO-POS-K11-R3-22_S34.sort.rmdup.bam 
+
+sbatch scripts/mergeBamCov.sbatch DMSO-POS-K4 \
+  DMSO-POS-K4-R1-2_S41.sort.rmdup.bam \
+  DMSO-POS-K4-R2-6_S45.sort.rmdup.bam \
+  DMSO-POS-K4-R3-10_S21.sort.rmdup.bam 
+```
+
+# make heatmaps over above TSSs
+```{bash}
+# look at each mark for both normalisation methods
+sbatch scripts/DTMatrix_K11_Dmnorm_topExpTSS.sbatch
+sbatch scripts/DTMatrix_K11_RPGC_topExpTSS.sbatch
+sbatch scripts/DTMatrix_K4_Dmnorm_topExpTSS.sbatch
+sbatch scripts/DTMatrix_K4_RPGC_topExpTSS.sbatch
+```
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_ChIP_250804.txt"))
+)
+```
