@@ -1,0 +1,179 @@
+---
+title: "GEO_PRJNA854916"
+author: "Andrea"
+date: "2024/12/09"
+output: html_document
+---
+
+fastq location: /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/fastqs
+project directory: /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916
+
+# download data from SRA (run on transfer server)
+```{bash}
+sh download.sh
+
+# remove SRR & GSM #s and Homo_sapiens from sample names to simplify
+mv SRR24820311_GSM7441301_TS185_02_OPM-2_CCS1477_6h_S2_Homo_sapiens_ATAC-seq_1.fastq.gz TS185_02_OPM-2_CCS1477_6h_S2_ATAC-seq_1.fastq.gz
+
+mv SRR24820311_GSM7441301_TS185_02_OPM-2_CCS1477_6h_S2_Homo_sapiens_ATAC-seq_2.fastq.gz TS185_02_OPM-2_CCS1477_6h_S2_ATAC-seq_2.fastq.gz
+
+mv SRR24807886_GSM7441292_TS186_01_H3K27ac_6h_DMSO_OPM-2_S1_Homo_sapiens_ChIP-Seq_1.fastq.gz TS186_01_H3K27ac_6h_DMSO_OPM-2_S1_ChIP-Seq_1.fastq.gz
+
+mv SRR24807886_GSM7441292_TS186_01_H3K27ac_6h_DMSO_OPM-2_S1_Homo_sapiens_ChIP-Seq_2.fastq.gz TS186_01_H3K27ac_6h_DMSO_OPM-2_S1_ChIP-Seq_2.fastq.gz
+
+mv SRR24820310_GSM7441302_TS185_03_OPM-2_DMSO_48h_S3_Homo_sapiens_ATAC-seq_1.fastq.gz TS185_03_OPM-2_DMSO_48h_S3_ATAC-seq_1.fastq.gz
+
+mv SRR24820310_GSM7441302_TS185_03_OPM-2_DMSO_48h_S3_Homo_sapiens_ATAC-seq_2.fastq.gz TS185_03_OPM-2_DMSO_48h_S3_ATAC-seq_2.fastq.gz
+
+mv SRR24807883_GSM7441295_TS186_04_H3K27ac_48h_DMSO_OPM-2_S4_Homo_sapiens_ChIP-Seq_1.fastq.gz TS186_04_H3K27ac_48h_DMSO_OPM-2_S4_ChIP-Seq_1.fastq.gz
+
+mv SRR24807883_GSM7441295_TS186_04_H3K27ac_48h_DMSO_OPM-2_S4_Homo_sapiens_ChIP-Seq_2.fastq.gz TS186_04_H3K27ac_48h_DMSO_OPM-2_S4_ChIP-Seq_2.fastq.gz
+
+mv SRR24807884_GSM7441294_TS186_03_H3K27ac_6h_CCS1477_OPM-2_S3_Homo_sapiens_ChIP-Seq_1.fastq.gz TS186_03_H3K27ac_6h_CCS1477_OPM-2_S3_ChIP-Seq_1.fastq.gz
+
+mv SRR24807884_GSM7441294_TS186_03_H3K27ac_6h_CCS1477_OPM-2_S3_Homo_sapiens_ChIP-Seq_2.fastq.gz TS186_03_H3K27ac_6h_CCS1477_OPM-2_S3_ChIP-Seq_2.fastq.gz
+
+mv SRR24807879_GSM7441299_TS186_11_H3K27ac_48h_CCS1477_OPM-2_S11_Homo_sapiens_ChIP-Seq_1.fastq.gz TS186_11_H3K27ac_48h_CCS1477_OPM-2_S11_ChIP-Seq_1.fastq.gz
+
+mv SRR24807879_GSM7441299_TS186_11_H3K27ac_48h_CCS1477_OPM-2_S11_Homo_sapiens_ChIP-Seq_2.fastq.gz TS186_11_H3K27ac_48h_CCS1477_OPM-2_S11_ChIP-Seq_2.fastq.gz
+
+mv SRR19943955_GSM6284905_TS172_03_OPM2_INPUT_Homo_sapiens_ChIP-Seq_1.fastq.gz TS172_03_OPM2_INPUT_ChIP-Seq_1.fastq.gz
+
+mv SRR19943955_GSM6284905_TS172_03_OPM2_INPUT_Homo_sapiens_ChIP-Seq_2.fastq.gz TS172_03_OPM2_INPUT_ChIP-Seq_2.fastq.gz
+
+mv SRR24820309_GSM7441303_TS185_04_OPM-2_CCS1477_48h_S4_Homo_sapiens_ATAC-seq_1.fastq.gz TS185_04_OPM-2_CCS1477_48h_S4_ATAC-seq_1.fastq.gz
+
+mv SRR24820309_GSM7441303_TS185_04_OPM-2_CCS1477_48h_S4_Homo_sapiens_ATAC-seq_2.fastq.gz TS185_04_OPM-2_CCS1477_48h_S4_ATAC-seq_2.fastq.gz
+
+mv SRR24820312_GSM7441300_TS185_01_OPM-2_DMSO_6h_S1_Homo_sapiens_ATAC-seq_1.fastq.gz TS185_01_OPM-2_DMSO_6h_S1_ATAC-seq_1.fastq.gz
+
+mv SRR24820312_GSM7441300_TS185_01_OPM-2_DMSO_6h_S1_Homo_sapiens_ATAC-seq_2.fastq.gz TS185_01_OPM-2_DMSO_6h_S1_ATAC-seq_2.fastq.gz
+```
+
+# set up project dir and process (fastqc, trim, align, tdfs)
+```{bash}
+mkdir alignment
+mkdir fastqc
+mkdir trimmed_fastqs
+mkdir logs
+mkdir scripts
+mkdir tdfs
+
+for fq in /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/fastqs/*_1.fastq.gz
+do
+sname=`basename $fq _1.fastq.gz`
+dname=`dirname $fq`
+sbatch scripts/alignHg38_PE.sbatch $fq ${dname}/${sname}_2.fastq.gz
+done
+
+module load multiqc/1.8
+multiqc .
+```
+
+# peak calling with macs for chip and genrich for atacseq
+```{bash}
+mkdir -p macs/narrowpeaks
+mkdir -p macs/broadpeaks
+mkdir genrich
+
+for bam in alignment/*H3K27ac*sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/*INPUT*sort.rmdup.bam
+done
+
+# bams need to be name sorted for genrich
+for bam in alignment/*ATAC-seq*sort.rmdup.bam
+do
+sbatch scripts/namesort.sbatch $bam
+done
+
+for bam in alignment/*ATAC-seq.namesort.rmdup.bam
+do
+sbatch scripts/genrich.sbatch $bam
+done
+```
+
+# get intersect of atac & chip peaks to define enhancers
+```{bash}
+module load bedtools/2.31.1
+mkdir bed_files
+
+# intersect ATAC DMSO samples to get consensus ATAC peaks
+bedtools intersect -u -a genrich/TS185_01_OPM-2_DMSO_6h_S1_ATAC-seq.narrowPeak \
+  -b genrich/TS185_03_OPM-2_DMSO_48h_S3_ATAC-seq.narrowPeak > \
+  bed_files/consensus_DMSO_ATACseq_peaks.bed
+
+# intersect chip DMSO samples for consensus H3K27ac peaks
+bedtools intersect -u -a macs/broadpeaks/TS186_01_H3K27ac_6h_DMSO_OPM-2_S1_ChIP-Seq_peaks.broadPeak \
+  -b macs/broadpeaks/TS186_04_H3K27ac_48h_DMSO_OPM-2_S4_ChIP-Seq_peaks.broadPeak > \
+  bed_files/consensus_DMSO_ChIPseq_peaks.bed
+
+# get intersection of both as high confidence enhancers
+bedtools intersect -u -a bed_files/consensus_DMSO_ChIPseq_peaks.bed \
+  -b bed_files/consensus_DMSO_ATACseq_peaks.bed > \
+  bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks.bed
+```
+
+# classify enhancers by region
+# first init R env
+```{r}
+library(data.table)
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+
+project.dir <- "/dawson_genomics/Projects/CCS1477/GEO_PRJNA854916"
+bed.dir <- file.path(project.dir, "bed_files")
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# annotate enhancer file
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+enh.bed <- fread(file.path(bed.dir, "consensus_DMSO_ATACseq_ChIPseq_peaks.bed"))
+
+enh.gr <- with(enh.bed, GRanges(V1, IRanges(start = V2, end = V3)))
+seqlevelsStyle(enh.gr) <- "UCSC"
+anno.enh <- annotatePeak(enh.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+enh.ann <- as.data.frame(anno.enh)
+
+write.table(
+  enh.ann,
+  file.path(res.dir, "consensus_DMSO_ATACseq_ChIPseq_peaks_ann.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+# plot annoBar for enhancers
+```{r}
+pdf(file.path(plots.dir, "annoBar_OPM2_enhancers.pdf"), height = 4, width = 8)
+plotAnnoBar(anno.enh, title = "consensus_DMSO_ATACseq_ChIPseq_peaks")
+dev.off()
+```
+
+# exclude promoter regions from enhancers bed and write out 
+```{r}
+prom.dist.enh <- enh.ann[-which(enh.ann$annotation %in% c("Promoter (<=1kb)", "Promoter (1-2kb)", "Promoter (2-3kb)")), ]
+
+write.table(
+  prom.dist.enh,
+  file.path(bed.dir, "consensus_DMSO_ATACseq_ChIPseq_peaks_promDistal.bed"),
+  sep = "\t", 
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path("session-info", paste0(Sys.Date(), "_GEO_PRJNA854916.txt"))
+)
+```
