@@ -1,0 +1,77 @@
+---
+title: "primary_CRISPR"
+author: "Andrea"
+date: '2023-04-03'
+output: html_document
+---
+
+
+# 4 primary samples w/sequencing at day0, day16, day21 (see Screening_overview.ppt for full info):
+#   T0 = day0
+#   T6 = day16
+#   T7 = day21
+# technical replicates are being sequenced, to follow
+
+# start from Ollie's combined counts files for each sample, run mageck test for T7vT0
+```{bash}
+sbatch scripts/mageck_test.sbatch guide_counts/419_counts.txt T7_R1 T0
+sbatch scripts/mageck_test.sbatch guide_counts/160_counts.txt T7_R1 T0
+sbatch scripts/mageck_test.sbatch guide_counts/148_counts.txt T7_R1 T0
+sbatch scripts/mageck_test.sbatch guide_counts/108_counts.txt T7_R1 T0
+```
+
+# get genes common to all samples as sig neg
+```{r}
+library(data.table)
+
+scratch.dir <- "/scratch/teams/dawson_genomics/Projects/primary_CRISPR"
+res.dir <- file.path(scratch.dir, "mageck_results")
+
+res.files <- list.files(res.dir, pattern = "gene_summary.txt", full.names = TRUE)
+
+# get sig (fdr<0.1) neg genes from each and collate
+all.genes <- NULL
+for(res.file in res.files){
+  rfile <- fread(res.file)
+  sig.genes <- rfile[which(rfile$`neg|fdr` < 0.1), "id"]
+  all.genes <- rbind(all.genes, sig.genes)
+}
+
+# get genes which occur in 2+ samples
+dup.genes <- all.genes[(which(duplicated(all.genes)))]
+# make table with depmap info
+dup.genes <- cbind(dup.genes, "common.essential" = TRUE)
+# check each in depmap (26 genes) and change any not listed as common essential
+dup.genes$common.essential[which(dup.genes$id == "SIX5")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "FOXO6")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "HOXA9")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "HIST2H2BF")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "PRKAA1")] <- "STONGLY.SELECTIVE"
+dup.genes$common.essential[which(dup.genes$id == "ZFP36L2")] <- "STONGLY.SELECTIVE"
+dup.genes$common.essential[which(dup.genes$id == "IER2")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "MEAF6")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "HEXIM1")] <- FALSE
+dup.genes$common.essential[which(dup.genes$id == "MYCL")] <- "STONGLY.SELECTIVE"
+
+# save table
+write.table(
+  dup.genes,
+  file.path(res.dir, "sig_genes_2sample_essentiality.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(scratch.dir, "session-info", paste0(Sys.Date(), "_primary_CRISPR.txt"))
+)
+```
