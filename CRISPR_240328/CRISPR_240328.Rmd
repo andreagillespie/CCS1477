@@ -1,0 +1,302 @@
+---
+title: "CRISPR_240328"
+author: "Andrea"
+date: '2024-04-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+fastq dir: /pipeline/Runs/NextSeq/240328_VH01624_82_AACG7M3HV/ProjectFolders/Project_Oliver-Sinclair/Sample*
+project dir: /dawson_genomics/Projects/CCS1477/CRISPR_240328
+
+# QC, map and process fastqs
+```{bash}
+mkdir fastqc
+mkdir scripts
+mkdir logs
+mkdir trimmed_fastqs
+mkdir alignment
+mkdir mapped_guides
+mkdir guide_counts
+
+for fq in /pipeline/Runs/NextSeq/240328_VH01624_82_AACG7M3HV/ProjectFolders/Project_Oliver-Sinclair/Sample_*/*_R1_001.fastq.gz
+do
+sbatch scripts/MapCRISPR.sbatch $fq 
+done
+
+module load multiqc/1.8
+multiqc .
+```
+
+# load libraries and set paths
+```{r}
+library(data.table)
+library(limma)
+library(ggplot2)
+library(EnhancedVolcano)
+library(ggrepel)
+
+project.dir <- "/dawson_genomics/Projects/CCS1477/CRISPR_240328"
+counts.dir <- file.path(project.dir, "guide_counts")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# combine guide counts into a counts table
+```{r}
+gc.files <- list.files(counts.dir)
+all.counts <- fread(file.path(counts.dir, gc.files[1]), skip = 1)
+colnames(all.counts) <- c(gc.files[1], "sgRNA")
+for(gc in gc.files[-1]){
+  counts <- fread(file.path(counts.dir, gc), skip = 1)
+  colnames(counts) <- c(gc, "sgRNA")
+  all.counts <- merge(all.counts, counts, by = "sgRNA", all = TRUE)
+}
+colnames(all.counts) <- gsub(".guideCounts.txt", "", colnames(all.counts))
+
+# annotate with gene names and order for mageck format
+hg.ann <- fread("/data/reference/dawson_labs/biomart_annotations/Hsapiens/ensembl_hgnc_entrez.txt")
+sg.split <- strsplit2(all.counts$sgRNA, "_")
+all.counts$ensg <- sg.split[, 2]
+all.counts <- merge(all.counts, hg.ann, by.x = "ensg", by.y = "ensembl_gene_id", all.x = TRUE)
+all.counts <- all.counts[, c(2,24, 3:23)]
+colnames(all.counts)[2] <- "gene"
+
+# clear up any issues or formatting that are problematic for mageck
+# change any NAs to 0 counts 
+all.counts[is.na(all.counts)] <- 0
+all.counts$gene[which(all.counts$gene == 0)] <- "0None"
+# if no gene name use ensembl ID
+nogene <- which(all.counts$gene == "")
+all.counts$gene[nogene] <- strsplit2(all.counts$sgRNA, "_")[nogene, 2]
+# remove duplicates
+all.counts <- all.counts[-(which(duplicated(all.counts))),]
+
+write.table(
+  all.counts,
+  file.path(counts.dir, "all_guideCounts.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+### sample names
+SAMPLE ID NOTES
+i1    OPM2 T0
+i2    OPM2 D17 DMSO
+i3    OPM2 D17 12.5nm
+i4    OPM2 D17 50nm
+i5    OPM2 D20 DMSO
+i6    OPM2 D20 12.5nm
+i7    OPM2 D20 50nm
+i8    OCI-AML3 T0
+i9    OCI-AML3 D17 DMSO
+i10   OCI-AML3 D17 25nm
+i11   OCI-AML3 D17 100nm
+i12   OCI-AML3 D20 DMSO
+i13   OCI-AML3 D20 25nm
+i14   OCI-AML3 D20 100nm
+i15   MV411 T0
+i16   MV411 D17 DMSO
+i17   MV411 D17 25nm
+i18   MV411 D17 100nm
+i19   MV411 D20 DMSO
+i20   MV411 D20 25nm
+i21   MV411 D20 100nm
+
+# run mageck test for desired comparisons
+```{bash}
+mkdir mageck_counts
+
+module purge
+module load mageck/0.5.9
+module load scipy/0.17.0
+module load R/4.2.0
+
+mageck test -k guide_counts/all_guideCounts.txt -t i6_S18 -c i5_S17 -n mageck_counts/OPM2_D20_12_5nm_vs_DMSO --pdf-report --keep-tmp
+mageck test -k guide_counts/all_guideCounts.txt -t i7_S19 -c i5_S17 -n mageck_counts/OPM2_D20_50nm_vs_DMSO --pdf-report --keep-tmp
+
+mageck test -k guide_counts/all_guideCounts.txt -t i13_S4 -c i12_S3 -n mageck_counts/OCI-AML3_D20_25nm_vs_DMSO --pdf-report --keep-tmp
+mageck test -k guide_counts/all_guideCounts.txt -t i14_S5 -c i12_S3 -n mageck_counts/OCI-AML3_D20_100nm_vs_DMSO --pdf-report --keep-tmp
+
+mageck test -k guide_counts/all_guideCounts.txt -t i20_S12 -c i19_S10 -n mageck_counts/MV411_D20_25nm_vs_DMSO --pdf-report --keep-tmp
+mageck test -k guide_counts/all_guideCounts.txt -t i21_S13 -c i19_S10 -n mageck_counts/MV411_D20_100nm_vs_DMSO --pdf-report --keep-tmp
+```
+
+# for genes of interest extract best performing guide from each experiment
+```{r}
+mag.dir <- file.path(project.dir, "mageck_counts")
+
+comps <- c("OPM2_D20_12_5nm_vs_DMSO", "OPM2_D20_50nm_vs_DMSO", "OCI-AML3_D20_25nm_vs_DMSO", "OCI-AML3_D20_100nm_vs_DMSO", "MV411_D20_25nm_vs_DMSO", "MV411_D20_100nm_vs_DMSO")
+gois <- c("HDAC3", "TBL1XR1", "INO80", "INO80D", "INO80E", "TFPT", "UCHL5", "NFRKB", "EP300", "CREBBP")
+
+top.sg <- NULL
+for(comp.i in 1:length(comps)){
+  sg.table <- fread(file.path(mag.dir, paste0(comps[comp.i], ".sgrna_summary.txt")))
+  for(goi in gois){
+    sg.sub <- subset(sg.table, Gene == goi)
+    sg.top <- sg.sub[which(abs(sg.sub$LFC) == max(abs(sg.sub$LFC))),]
+    top.sg <- rbind(top.sg, sg.top)
+  }
+}
+
+write.table(
+  top.sg,
+  file.path(mag.dir, "gois_top_sgrna_stats.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# for each gene, 2 sgrnas that were most commonly top across experiments selected, tie decided by stats
+# loop through these to get sequence from fasta
+sgs <- c("CREBBP_ENSG00000005339_155106.1", "CREBBP_ENSG00000005339_155109.4", "EP300_ENSG00000100393_58058.3", "EP300_ENSG00000100393_58061.6", "HDAC3_ENSG00000171720_161760.1", "HDAC3_ENSG00000171720_161762.3", "INO80_ENSG00000128908_53868.1", "INO80_ENSG00000128908_53869.2", "INO80D_ENSG00000114933_130266.4", "INO80D_ENSG00000114933_130267.5", "INO80E_ENSG00000169592_10316.4", "INO80E_ENSG00000169592_10314.2", "NFRKB_ENSG00000170322_181377.3","NFRKB_ENSG00000170322_181380.6", "TBL1XR1_ENSG00000177565_2560.5", "TBL1XR1_ENSG00000177565_2559.4", "TFPT_ENSG00000105619_4661.6", "TFPT_ENSG00000105619_4660.5", "UCHL5_ENSG00000116750_59131.6", "UCHL5_ENSG00000116750_59127.2")
+sg.fa <- fread("/data/reference/dawson_labs/CRISPR/HgChromatin_and_TF_Pool/HgChromatin_and_TF_Pool.fa", header = FALSE)
+
+sg.seqs <- NULL  
+for(sg in sgs){
+  sg.x <- grep(sg, t(sg.fa))
+  sg.seq <- cbind(sg.fa[sg.x], sg.fa[sg.x+1])
+  sg.seqs <- rbind(sg.seqs, sg.seq)
+}
+
+sg.seqs$V1 <- gsub(">", "", sg.seqs$V1)
+write.table(
+  sg.seqs,
+  file.path(mag.dir, "top_guides_sequences.txt"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+# get correlation between different cell lines
+```{r}
+# make a table of rra scores  of genes from each comp
+# init table
+score.table <- fread(file.path(mag.dir, paste0(comps[1], ".gene_summary.txt")))
+score.table <- score.table[, c("id", "neg|score")]
+colnames(score.table) <- c("gene", gsub("_vs_DMSO", "", comps[1]))
+
+for(comp.i in 2:length(comps)){
+  gene.table <- fread(file.path(mag.dir, paste0(comps[comp.i], ".gene_summary.txt")))
+  gene.ranks <- gene.table[, c("id", "neg|score")]
+  score.table <- merge(score.table, gene.ranks, by.x = "gene", by.y = "id")
+  colnames(score.table)[comp.i + 1] <- gsub("_vs_DMSO", "", comps[comp.i])
+}
+
+# add col for mean of scores and rank by avg score
+score.table$mean_score <- rowMeans(score.table[, 2:7])
+score.table <- score.table[order(score.table$mean_score), ]
+
+# see where gois rank
+score.table[which(score.table$gene %in% gois), ]
+```
+> score.table[which(score.table$gene %in% gois), ]
+        gene OPM2_D20_12_5nm OPM2_D20_50nm OCI-AML3_D20_25nm OCI-AML3_D20_100nm MV411_D20_25nm MV411_D20_100nm  mean_score
+5       TFPT      1.1953e-06    1.0709e-02        5.2022e-10         2.5291e-10     2.9018e-02      1.4666e-03 0.006865799
+8     CREBBP      3.0091e-11    4.0311e-05        1.8020e-02         5.2119e-02     8.1349e-07      3.1371e-07 0.011696740
+9     INO80E      1.8419e-04    2.9254e-02        3.7202e-07         1.2377e-06     1.7418e-02      3.5526e-02 0.013730633
+10     INO80      4.4510e-05    1.1356e-04        7.9899e-03         4.6644e-03     7.6062e-02      7.2701e-03 0.016024078
+13     UCHL5      1.3546e-05    5.4446e-02        8.7633e-05         1.7141e-04     1.7841e-02      5.7849e-02 0.021734765
+14     EP300      6.5025e-04    1.3367e-01        4.7079e-07         1.6668e-06     2.2493e-05      1.8459e-04 0.022421578
+17     NFRKB      7.7108e-07    8.5479e-02        1.4405e-07         2.4479e-05     2.3491e-02      7.9975e-02 0.031495066
+31    INO80D      1.7519e-04    1.5032e-02        1.4360e-07         7.9076e-07     3.0788e-01      9.0763e-03 0.055360737
+2413   HDAC3      1.0000e+00    1.0000e+00        8.5091e-01         9.5537e-01     8.6666e-01      4.9793e-01 0.861811667
+2422 TBL1XR1      1.0000e+00    1.0000e+00        9.9975e-01         4.7744e-01     8.9800e-01      1.0000e+00 0.895865000
+
+# look at gsea for consistent pathway (cannonical pathways and hallmark) enrichment across comps
+```{bash}
+module load mageck/0.5.9
+
+mageckGSEA -r mageck_counts/MV411_D20_100nm_vs_DMSO.gene_summary.txt -g ~/CRISPR_metaanalysis/Bassik/reference_files/c2.cp.v2023.1.Hs.symbols.gmt -c 1 -o gsea/MV411_D20_100nm_GSEA_CP.txt
+mageckGSEA -r mageck_counts/MV411_D20_100nm_vs_DMSO.gene_summary.txt -g ~/CRISPR_metaanalysis/Bassik/reference_files/h.all.v2023.1.Hs.symbols.gmt -c 1 -o gsea/MV411_D20_100nm_GSEA_Hallmark.txt
+
+```
+
+# add THP data from Manchester
+```{r}
+thp.tables <- list.files(
+  "/dawson_genomics/Projects/CCS1477/Manchester_CRISPR/Unaligned_TS182/mageck_counts",
+  pattern = "gene_summary.txt",
+  full.names = TRUE
+  )
+
+for(thp.i in 1:2){
+  gene.table <- fread(thp.tables[thp.i])
+  gene.ranks <- gene.table[, c("id", "neg|score")]
+  score.table <- merge(score.table, gene.ranks, by.x = "gene", by.y = "id")
+  colnames(score.table)[thp.i + 8] <- gsub("_vs_DMSO.gene_summary.txt", "", basename(thp.tables[thp.i]))
+}
+
+# reorder cols, recalculate mean of scores and re-rank by new avg score
+score.table <- score.table[, c(1:7, 9, 10, 8)]
+score.table$mean_score <- rowMeans(score.table[, 2:9])
+score.table <- score.table[order(score.table$mean_score), ]
+
+# see new rank of gois
+cbind(which(score.table$gene %in% gois), score.table$gene[which(score.table$gene %in% gois)])
+```
+
+# make volcano plots for each comparison
+```{r}
+# get paths for all tables
+all.tables <- list.files(mag.dir, pattern = "gene_summary.txt", full.names = TRUE)
+all.tables <- c(all.tables, thp.tables)
+
+for(file.i in 1:8){
+  comp.table <- fread(all.tables[file.i])
+  pdf(file.path(plots.dir, paste0("volcano_", gsub("_vs_DMSO.gene_summary.txt", "", basename(all.tables[file.i])), ".pdf")))
+  EnhancedVolcano(
+    comp.table,
+    lab = comp.table$id,
+    x = "neg|lfc",
+    y = "neg|p-value",
+    selectLab = c("HDAC3", "TBL1XR1", "INO80", "INO80D", "INO80E", "TFPT", "UCHL5", "NFRKB", "EP300", "CREBBP"),
+    drawConnectors = TRUE,
+    ylim = c(0, 6)
+  )
+  dev.off()
+}
+```
+
+# also make rank plots for each
+```{r}
+for(file.i in 1:8){
+  comp.table <- fread(all.tables[file.i])
+  comp.table <- comp.table[order(comp.table$`neg|lfc`, decreasing = TRUE), ]
+  comp.table$lfc.rank <- rev(seq(1:nrow(comp.table)))
+  comp.table$goi <- comp.table$id %in% gois
+  # sort by gois so these are plotted last
+  comp.table <- comp.table[order(comp.table$goi), ]
+  pdf(
+    file.path(plots.dir, paste0("rankplot_", gsub("_vs_DMSO.gene_summary.txt", "", basename(all.tables[file.i])), ".pdf")), 
+    height = 8, width = 10
+    )
+  ggplot(comp.table, aes(x = lfc.rank, y = `neg|lfc`)) +
+    geom_point(stat = "identity", aes(col = goi)) +
+    scale_color_manual(values = c("TRUE" = "red", "FALSE" = "gray25"), guide = "none") +
+    geom_label_repel(aes(label = ifelse(goi == TRUE, id, "")), max.overlaps = 500, size = 4, point.padding = 0.5, box.padding = 0.15) +
+    labs(title = gsub("_vs_DMSO.gene_summary.txt", "", basename(all.tables[file.i])), y = "LFC", x = "Rank") +
+    theme_bw()
+  dev.off()
+}
+```
+
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_CRISRP_240328.txt"))
+)
+```
