@@ -1,0 +1,1219 @@
+---
+title: "ChIPseq_241008"
+author: "Andrea"
+date: "2024/10/11"
+output: html_document
+---
+
+fastq location: /pipeline/Runs/NextSeq/241008_VH01624_181_AACKMFFHV/ProjectFolders/Project_Oliver-Sinclair/
+project directory: /dawson_genomics/Projects/CCS1477/ChIP_241008/
+
+# set up project dir and process (fastqc, trim, align, tdfs)
+```{bash}
+mkdir alignment
+mkdir fastqc
+mkdir fastq_screen
+mkdir trimmed_fastqs
+mkdir logs
+mkdir scripts
+mkdir tdfs
+
+for fq in /pipeline/Runs/NextSeq/241008_VH01624_181_AACKMFFHV/ProjectFolders/Project_Oliver-Sinclair/Sample*/*_R1_001.fastq.gz
+do
+sbatch scripts/alignHg38.sbatch $fq
+done
+
+# run multiqc to collate reports
+module load multiqc/1.8
+multiqc .
+```
+
+# peak calling (both narrow and broad) include bedgraph output for Spark plots and diff peaks if needed
+```{bash}
+mkdir -p macs/narrowpeaks
+mkdir -p macs/broadpeaks
+
+for bam in alignment/INO80E-CCS-[HIP][AN3]*sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/INO80E-CCS-Input-38_S39.sort.rmdup.bam
+done
+
+for bam in alignment/INO80E-DMSO-[HIP][AN3]*sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/INO80E-DMSO-Input-37_S38.sort.rmdup.bam
+done
+
+for bam in alignment/UCHL5-*-[HIP][AN3]*sort.rmdup.bam
+do
+sbatch scripts/macs2.sbatch $bam alignment/INO80E-DMSO-Input-37_S38.sort.rmdup.bam
+done
+```
+
+# make bigwigs for all reps
+```{bash}
+mkdir bigwigs
+
+for bam in alignment/*sort.rmdup.bam
+do
+sbatch scripts/DeeptoolsBamCov.sbatch $bam 
+done
+```
+
+# make deeptools plots of all reps for each mark
+```{bash}
+mkdir results
+mkdir plots
+
+sbatch scripts/DTMatrix_HA_MANE_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_INO80_MANE_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_P300_MANE_RPGCnorm.sbatch
+```
+
+
+# combine reps by normalised bedgraphs
+```{bash}
+module load macs/2.2.7.1
+cd macs/broadpeaks
+
+macs2 cmbreps -i INO80E-CCS-HA-R1-28_S28_treat_pileup.bdg INO80E-CCS-HA-R2-29_S29_treat_pileup.bdg INO80E-CCS-HA-R3-30_S31_treat_pileup.bdg -m mean -o INO80E-CCS-HA_treat_pileup.bdg
+macs2 cmbreps -i INO80E-CCS-INO80-R1-16_S15_treat_pileup.bdg INO80E-CCS-INO80-R2-17_S16_treat_pileup.bdg INO80E-CCS-INO80-R3-18_S17_treat_pileup.bdg -m mean -o INO80E-CCS-INO80_treat_pileup.bdg
+macs2 cmbreps -i INO80E-CCS-P300-R1-4_S42_treat_pileup.bdg INO80E-CCS-P300-R2-5_S43_treat_pileup.bdg INO80E-CCS-P300-R3-6_S44_treat_pileup.bdg -m mean -o INO80E-CCS-P300_treat_pileup.bdg
+
+macs2 cmbreps -i INO80E-DMSO-HA-R1-25_S25_treat_pileup.bdg INO80E-DMSO-HA-R2-26_S26_treat_pileup.bdg INO80E-DMSO-HA-R3-27_S27_treat_pileup.bdg -m mean -o INO80E-DMSO-HA_treat_pileup.bdg
+macs2 cmbreps -i INO80E-DMSO-INO80-R1-13_S12_treat_pileup.bdg INO80E-DMSO-INO80-R2-14_S13_treat_pileup.bdg INO80E-DMSO-INO80-R3-15_S14_treat_pileup.bdg -m mean -o INO80E-DMSO-INO80_treat_pileup.bdg
+macs2 cmbreps -i INO80E-DMSO-P300-R1-1_S19_treat_pileup.bdg INO80E-DMSO-P300-R2-2_S30_treat_pileup.bdg INO80E-DMSO-P300-R3-3_S41_treat_pileup.bdg -m mean -o INO80E-DMSO-P300_treat_pileup.bdg
+
+macs2 cmbreps -i UCHL5-CCS-HA-R1-34_S35_treat_pileup.bdg UCHL5-CCS-HA-R2-25_S36_treat_pileup.bdg UCHL5-CCS-HA-R3-36_S37_treat_pileup.bdg -m mean -o UCHL5-CCS-HA_treat_pileup.bdg
+macs2 cmbreps -i UCHL5-CCS-INO80-R1-22_S22_treat_pileup.bdg UCHL5-CCS-INO80-R2-23_S23_treat_pileup.bdg UCHL5-CCS-INO80-R3-24_S24_treat_pileup.bdg -m mean -o UCHL5-CCS-INO80_treat_pileup.bdg
+macs2 cmbreps -i UCHL5-CCS-P300-R1-10_S9_treat_pileup.bdg UCHL5-CCS-P300-R2-11_S10_treat_pileup.bdg UCHL5-CCS-P300-R3-12_S11_treat_pileup.bdg -m mean -o UCHL5-CCS-P300_treat_pileup.bdg
+
+macs2 cmbreps -i UCHL5-DMSO-HA-R1-31_S32_treat_pileup.bdg UCHL5-DMSO-HA-R2-32_S33_treat_pileup.bdg UCHL5-DMSO-HA-R3-33_S34_treat_pileup.bdg -m mean -o UCHL5-DMSO-HA_treat_pileup.bdg
+macs2 cmbreps -i UCHL5-DMSO-INO80-R1-19_S18_treat_pileup.bdg UCHL5-DMSO-INO80-R2-20_S20_treat_pileup.bdg UCHL5-DMSO-INO80-R3-21_S21_treat_pileup.bdg -m mean -o UCHL5-DMSO-INO80_treat_pileup.bdg
+macs2 cmbreps -i UCHL5-DMSO-P300-R1-7_S45_treat_pileup.bdg UCHL5-DMSO-P300-R2-8_S46_treat_pileup.bdg UCHL5-DMSO-P300-R3-9_S47_treat_pileup.bdg -m mean -o UCHL5-DMSO-P300_treat_pileup.bdg
+```
+
+# get merged bams and bigwigs
+```{bash}
+sbatch scripts/mergeBamCov.sbatch INO80E-CCS-HA-R1-28_S28.sort.rmdup.bam INO80E-CCS-HA-R2-29_S29.sort.rmdup.bam INO80E-CCS-HA-R3-30_S31.sort.rmdup.bam INO80E-CCS-HA
+sbatch scripts/mergeBamCov.sbatch INO80E-CCS-INO80-R1-16_S15.sort.rmdup.bam INO80E-CCS-INO80-R2-17_S16.sort.rmdup.bam INO80E-CCS-INO80-R3-18_S17.sort.rmdup.bam INO80E-CCS-INO80
+sbatch scripts/mergeBamCov.sbatch INO80E-CCS-P300-R1-4_S42.sort.rmdup.bam INO80E-CCS-P300-R2-5_S43.sort.rmdup.bam INO80E-CCS-P300-R3-6_S44.sort.rmdup.bam INO80E-CCS-P300
+
+sbatch scripts/mergeBamCov.sbatch INO80E-DMSO-HA-R1-25_S25.sort.rmdup.bam INO80E-DMSO-HA-R2-26_S26.sort.rmdup.bam INO80E-DMSO-HA-R3-27_S27.sort.rmdup.bam INO80E-DMSO-HA
+sbatch scripts/mergeBamCov.sbatch INO80E-DMSO-INO80-R1-13_S12.sort.rmdup.bam INO80E-DMSO-INO80-R2-14_S13.sort.rmdup.bam INO80E-DMSO-INO80-R3-15_S14.sort.rmdup.bam INO80E-DMSO-INO80
+sbatch scripts/mergeBamCov.sbatch INO80E-DMSO-P300-R1-1_S19.sort.rmdup.bam INO80E-DMSO-P300-R2-2_S30.sort.rmdup.bam INO80E-DMSO-P300-R3-3_S41.sort.rmdup.bam INO80E-DMSO-P300
+
+sbatch scripts/mergeBamCov.sbatch UCHL5-CCS-HA-R1-34_S35.sort.rmdup.bam UCHL5-CCS-HA-R2-25_S36.sort.rmdup.bam UCHL5-CCS-HA-R3-36_S37.sort.rmdup.bam UCHL5-CCS-HA
+sbatch scripts/mergeBamCov.sbatch UCHL5-CCS-INO80-R1-22_S22.sort.rmdup.bam UCHL5-CCS-INO80-R2-23_S23.sort.rmdup.bam UCHL5-CCS-INO80-R3-24_S24.sort.rmdup.bam UCHL5-CCS-INO80
+sbatch scripts/mergeBamCov.sbatch UCHL5-CCS-P300-R1-10_S9.sort.rmdup.bam UCHL5-CCS-P300-R2-11_S10.sort.rmdup.bam UCHL5-CCS-P300-R3-12_S11.sort.rmdup.bam UCHL5-CCS-P300
+
+sbatch scripts/mergeBamCov.sbatch UCHL5-DMSO-HA-R1-31_S32.sort.rmdup.bam UCHL5-DMSO-HA-R2-32_S33.sort.rmdup.bam UCHL5-DMSO-HA-R3-33_S34.sort.rmdup.bam UCHL5-DMSO-HA
+sbatch scripts/mergeBamCov.sbatch UCHL5-DMSO-INO80-R1-19_S18.sort.rmdup.bam UCHL5-DMSO-INO80-R2-20_S20.sort.rmdup.bam UCHL5-DMSO-INO80-R3-21_S21.sort.rmdup.bam UCHL5-DMSO-INO80
+sbatch scripts/mergeBamCov.sbatch UCHL5-DMSO-P300-R1-7_S45.sort.rmdup.bam UCHL5-DMSO-P300-R2-8_S46.sort.rmdup.bam UCHL5-DMSO-P300-R3-9_S47.sort.rmdup.bam UCHL5-DMSO-P300
+```
+
+# get the overlap of HA & INO80 in INO80E, then examine peaks to see if 
+# they are reasonable for UCHL5 also (UCHL5-HA was non-specific)
+
+# first call peaks on merged replicates
+```{bash}
+sbatch scripts/macs2reps.sbatch INO80E-CCS-HA-R1-28_S28.sort.rmdup.bam \
+  INO80E-CCS-HA-R2-29_S29.sort.rmdup.bam INO80E-CCS-HA-R3-30_S31.sort.rmdup.bam \
+  INO80E-CCS-Input-38_S39.sort.rmdup.bam INO80E-CCS-HA_merged
+  
+sbatch scripts/macs2reps.sbatch INO80E-CCS-INO80-R1-16_S15.sort.rmdup.bam \
+  INO80E-CCS-INO80-R2-17_S16.sort.rmdup.bam INO80E-CCS-INO80-R3-18_S17.sort.rmdup.bam \
+  INO80E-CCS-Input-38_S39.sort.rmdup.bam INO80E-CCS-INO80_merged
+
+sbatch scripts/macs2reps.sbatch INO80E-CCS-P300-R1-4_S42.sort.rmdup.bam \
+  INO80E-CCS-P300-R2-5_S43.sort.rmdup.bam INO80E-CCS-P300-R3-6_S44.sort.rmdup.bam \
+  INO80E-CCS-Input-38_S39.sort.rmdup.bam INO80E-CCS-P300_merged
+
+
+sbatch scripts/macs2reps.sbatch INO80E-DMSO-HA-R1-25_S25.sort.rmdup.bam \
+  INO80E-DMSO-HA-R2-26_S26.sort.rmdup.bam INO80E-DMSO-HA-R3-27_S27.sort.rmdup.bam \
+  INO80E-DMSO-Input-37_S38.sort.rmdup.bam INO80E-DMSO-HA_merged
+
+sbatch scripts/macs2reps.sbatch INO80E-DMSO-INO80-R1-13_S12.sort.rmdup.bam \
+  INO80E-DMSO-INO80-R2-14_S13.sort.rmdup.bam INO80E-DMSO-INO80-R3-15_S14.sort.rmdup.bam \
+  INO80E-DMSO-Input-37_S38.sort.rmdup.bam INO80E-DMSO-INO80_merged
+
+sbatch scripts/macs2reps.sbatch INO80E-DMSO-P300-R1-1_S19.sort.rmdup.bam \
+  INO80E-DMSO-P300-R2-2_S30.sort.rmdup.bam INO80E-DMSO-P300-R3-3_S41.sort.rmdup.bam \
+  INO80E-DMSO-Input-37_S38.sort.rmdup.bam INO80E-DMSO-P300_merged
+
+
+sbatch scripts/macs2reps.sbatch UCHL5-CCS-HA-R1-34_S35.sort.rmdup.bam \
+  UCHL5-CCS-HA-R2-25_S36.sort.rmdup.bam UCHL5-CCS-HA-R3-36_S37.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-CCS-HA_merged
+
+sbatch scripts/macs2reps.sbatch UCHL5-CCS-INO80-R1-22_S22.sort.rmdup.bam \
+  UCHL5-CCS-INO80-R2-23_S23.sort.rmdup.bam UCHL5-CCS-INO80-R3-24_S24.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-CCS-INO80_merged
+
+sbatch scripts/macs2reps.sbatch UCHL5-CCS-P300-R1-10_S9.sort.rmdup.bam \
+  UCHL5-CCS-P300-R2-11_S10.sort.rmdup.bam UCHL5-CCS-P300-R3-12_S11.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-CCS-P300_merged
+
+
+sbatch scripts/macs2reps.sbatch UCHL5-DMSO-HA-R1-31_S32.sort.rmdup.bam \
+  UCHL5-DMSO-HA-R2-32_S33.sort.rmdup.bam UCHL5-DMSO-HA-R3-33_S34.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-DMSO-HA_merged
+
+sbatch scripts/macs2reps.sbatch UCHL5-DMSO-INO80-R1-19_S18.sort.rmdup.bam \
+  UCHL5-DMSO-INO80-R2-20_S20.sort.rmdup.bam UCHL5-DMSO-INO80-R3-21_S21.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-DMSO-INO80_merged
+
+sbatch scripts/macs2reps.sbatch UCHL5-DMSO-P300-R1-7_S45.sort.rmdup.bam \
+  UCHL5-DMSO-P300-R2-8_S46.sort.rmdup.bam UCHL5-DMSO-P300-R3-9_S47.sort.rmdup.bam \
+  UCHL5-DMSO-Input-39_S40.sort.rmdup.bam UCHL5-DMSO-P300_merged
+```
+
+# intersect peak calls btw HA & INO80 in INO80E
+```{bash}
+module load bedtools/2.31.1
+
+wc -l macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak
+6430 macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak
+
+wc -l macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak
+18551 macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak | wc -l
+6430
+
+# since all INO80E-DMSO-HA peaks are in INO80, intersect former w/UCHL5-DMSO-INO80
+# to gauge overlap
+wc -l macs/broadpeaks/UCHL5-DMSO-INO80_merged_peaks.broadPeak
+14858 macs/broadpeaks/UCHL5-DMSO-INO80_merged_peaks.broadPeak
+
+wc -l macs/broadpeaks/UCHL5-DMSO-HA_merged_peaks.broadPeak
+9 macs/broadpeaks/UCHL5-DMSO-HA_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/UCHL5-DMSO-INO80_merged_peaks.broadPeak | wc -l
+6416
+
+bedtools intersect -wa -u -a macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/UCHL5-DMSO-HA_merged_peaks.broadPeak | wc -l
+9 
+
+# also look at overlap w/P300
+wc -l macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak
+24073 macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak | wc -l
+5612
+
+bedtools intersect -wa -u -a macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak | wc -l
+13964
+```
+
+# getting a lot of false negatives in INO80E-*HA files
+# changing qvalue threshold does not yield more peaks, rather broader peaks so no useful
+# for just DMSO-HA use p-value as threshold to capture more peaks and look at overlap
+```{bash}
+module load macs/2.1.1
+
+macs2 callpeak -t alignment/UCHL5-DMSO-HA-R1-31_S32.sort.rmdup.bam \
+  alignment/UCHL5-DMSO-HA-R2-32_S33.sort.rmdup.bam \
+  alignment/UCHL5-DMSO-HA-R3-33_S34.sort.rmdup.bam \
+  -c alignment/UCHL5-DMSO-Input-39_S40.sort.rmdup.bam \
+  --broad -g hs -n UCHL5-DMSO-HA_merged_p10-7 --outdir macs/broadpeaks \
+  -B -p 0.0000001
+  
+macs2 callpeak -t alignment/INO80E-DMSO-HA-R1-25_S25.sort.rmdup.bam \
+  alignment/INO80E-DMSO-HA-R2-26_S26.sort.rmdup.bam \
+  alignment/INO80E-DMSO-HA-R3-27_S27.sort.rmdup.bam \
+  -c alignment/INO80E-DMSO-Input-37_S38.sort.rmdup.bam \
+  --broad -g hs -n INO80E-DMSO-HA_merged_p10-7 --outdir macs/broadpeaks \
+  -B -p 0.0000001
+```
+
+# look at UCHL5-DMSO-HA overlap again with less stringent peaks
+```{bash}
+wc -l macs/broadpeaks/UCHL5-DMSO-HA_merged_p10-7_peaks.broadPeak
+11723 macs/broadpeaks/UCHL5-DMSO-HA_merged_p10-7_peaks.broadPeak
+
+wc -l macs/broadpeaks/INO80E-DMSO-HA_merged_p10-7_peaks.broadPeak
+22246 macs/broadpeaks/INO80E-DMSO-HA_merged_p10-7_peaks.broadPeak
+
+bedtools intersect -wa -a macs/broadpeaks/INO80E-DMSO-HA_merged_p10-7_peaks.broadPeak \
+  -b macs/broadpeaks/UCHL5-DMSO-HA_merged_p10-7_peaks.broadPeak | wc -l
+1179
+```
+### only using p-value creates way too many false positives, so disregard these ###
+
+# annotate metazoan complex (INO80E-DMSO-HA peaks as there was 100% overlap)
+# load libraries and set paths
+```{r}
+library(data.table)
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(eulerr)
+library(RColorBrewer)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+project.dir <- "/dawson_genomics/Projects/CCS1477/ChIP_241008"
+peaks.dir <- file.path(project.dir, "macs/broadpeaks")
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# annotate peak calls and write out
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+peak.files <- list.files(peaks.dir, pattern = "merged_peaks.broadPeak", full.names = TRUE)
+
+peak.ann <- list()
+for(peak.i in 1:length(peak.files)){
+  peak.file <- fread(peak.files[peak.i])
+  peak.gr <- with(peak.file, GRanges(V1, IRanges(start = V2, end = V3)))
+	seqlevelsStyle(peak.gr) <- "UCSC"
+	anno.peak <- annotatePeak(peak.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+	peak.ann[[peak.i]] <- as.data.frame(anno.peak)
+	
+	write.table(
+	  peak.ann[[peak.i]],
+	  file.path(res.dir, paste0(gsub(".broadPeak", "", basename(peak.files[[peak.i]])), "_ann.txt")),
+	  sep = "\t",
+	  col.names = TRUE,
+	  row.names = FALSE,
+	  quote = FALSE
+	)
+}
+names(peak.ann) <- gsub("_peaks.broadPeak", "", basename(peak.files))
+```
+
+# get diff peaks for each mark drug v dmso
+```{bash}
+dname=macs/broadpeaks
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-HA_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-HA_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-HA_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-HA_merged_control_lambda.bdg INO80E-HA-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-INO80_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-INO80_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-INO80_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-INO80_merged_control_lambda.bdg INO80E-INO80-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-P300_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-P300_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-P300_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-P300_merged_control_lambda.bdg INO80E-P300-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-HA_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-HA_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-HA_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-HA_merged_control_lambda.bdg UCHL5-HA-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-INO80_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-INO80_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-INO80_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-INO80_merged_control_lambda.bdg UCHL5-INO80-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-P300_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-P300_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-P300_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-P300_merged_control_lambda.bdg UCHL5-P300-CCSvsDMSO
+```
+
+# nothing really up in any comparisons, just plot down peaks only for each mark
+```{bash}
+sbatch scripts/DTMatrix_P300_CCSvDMSOdown_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_INO80_CCSvDMSOdown_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_HA_CCSvDMSOdown_RPGCnorm.sbatch
+```
+
+# check overlap in peaks between dTAGs (& proportion)
+```{bash}
+module load bedtools/2.31.1
+
+wc -l bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed
+5070 bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed
+wc -l bdgdiff/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed
+3292 bdgdiff/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed
+wc -l bdgdiff/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed
+44 bdgdiff/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed
+wc -l  bdgdiff/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed
+7195 bdgdiff/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed
+
+bedtools intersect -wa -a bdgdiff/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed \
+  -b bdgdiff/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed | wc -l
+1913(/3292)
+  
+bedtools intersect -wa -a bdgdiff/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed \
+  -b bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed | wc -l 
+25(/44)
+```
+
+# make a venn of all INO80E sample peaks, then add UCHL5 separately
+```{r}
+fit <- euler(c("HA" = 0, "INO80" = 3718, "P300" = 9254, "HA&INO80" = 14, 
+               "INO80&P300" = 7418, "HA&INO80&P300" = 6416), shape = "ellipse")
+
+pdf(file.path(plots.dir, "venn_INO80E_peaks.pdf"))
+plot(fit, main = "INO80E peaks", Count = TRUE, quantities = TRUE)
+dev.off()
+```
+
+# get bed file for each group in venn
+```{bash}
+module load bedtools/2.31.1
+
+mkdir bed_files
+
+# first get overlap of P300 & INO80
+bedtools intersect -u -a macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed
+13964 bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed
+  
+# now get INO80 NOT overlapping w/P300
+bedtools intersect -v -a macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-INO80_peak_only.bed
+  
+wc -l bed_files/INO80E-DMSO-INO80_peak_only.bed
+4587 bed_files/INO80E-DMSO-INO80_peak_only.bed
+  
+# now get P300 NOT overlapping w/INO80
+bedtools intersect -v -a macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_peak_only.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_peak_only.bed
+9292 bed_files/INO80E-DMSO-P300_peak_only.bed
+
+# get P300_INO80 intersect which also intersects w/HA
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed \
+  -b macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_HA_peak_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_intersect.bed
+5455 bed_files/INO80E-DMSO-P300_INO80_HA_peak_intersect.bed
+
+# get P300_INO80 intersect which does NOT intersect w/HA
+bedtools intersect -v -a bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed \
+  -b macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_intersect.bed
+8509 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_intersect.bed
+
+# get HA  which does NOT intersect w/P300_INO80 intersect
+bedtools intersect -v -a macs/broadpeaks/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b bed_files/INO80E-DMSO-P300_INO80_peak_intersect.bed > \
+  bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect.bed
+
+wc -l bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect.bed
+676 bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect.bed
+```
+
+# remake w/venn based on these files as previous version was flawed
+```{r}
+fit <- euler(c("HA" = 0, "INO80" = 4587, "P300" = 9292, "HA&INO80" = 676, 
+               "INO80&P300" = 8509, "HA&INO80&P300" = 5455), shape = "ellipse")
+
+pdf(file.path(plots.dir, "venn_INO80E_peaks.pdf"))
+plot(fit, main = "INO80E peaks", Count = TRUE, quantities = TRUE)
+dev.off()
+```
+
+# add chr to bed files for homer
+```{r}
+sub.beds <- list.files("bed_files", full.names = TRUE)
+
+for(sub.bed in sub.beds){
+  sub.file <- fread(sub.bed)
+  sub.file$V1 <- paste0("chr", sub.file$V1)
+  write.table(
+    sub.file,
+    gsub(".bed", "_homer.bed", sub.bed),
+    sep = "\t",
+    col.names = FALSE,
+    row.names = FALSE,
+    quote = FALSE
+  )
+}
+```
+
+# motif enrichment of each of the 5 subsets from venn
+```{bash}
+mkdir homer
+
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_INO80_HA_peak_intersect_homer.bed INO80E-DMSO-P300_INO80_HA
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_intersect_homer.bed INO80E-DMSO-P300_INO80_only
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-INO80_peak_only_homer.bed INO80E-DMSO-INO80_only
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_peak_only_homer.bed INO80E-DMSO-P300_only
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect_homer.bed INO80E-DMSO-INO80_HA_only
+```
+
+# annotate and classify regions for each group
+```{r}
+bed.files <- list.files("bed_files", pattern = "[ty].bed", full.names = TRUE)
+
+bed.ann <- list()
+anno.peak <- list()
+for(bed.i in 1:length(bed.files)){
+  bed.file <- fread(bed.files[bed.i])
+  bed.gr <- with(bed.file, GRanges(V1, IRanges(start = V2, end = V3)))
+	seqlevelsStyle(bed.gr) <- "UCSC"
+	anno.peak[[bed.i]] <- annotatePeak(bed.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+	bed.ann[[bed.i]] <- as.data.frame(anno.peak[[bed.i]])
+	
+	write.table(
+	  bed.ann[[bed.i]],
+	  file.path(res.dir, gsub(".bed", "_ann.txt", basename(bed.files[[bed.i]]))),
+	  sep = "\t",
+	  col.names = TRUE,
+	  row.names = FALSE,
+	  quote = FALSE
+	)
+}
+names(bed.ann) <- gsub("_peak_.*.bed", "", basename(bed.files))
+names(anno.peak) <- gsub("_peak_.*.bed", "", basename(bed.files))
+
+pdf(file.path(plots.dir, "annoBar_venn_groups.pdf"), 
+	  height = 4, width = 8)
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300_INO80_HA`, title = "INO80E-DMSO-P300_INO80_HA")
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300_INO80_ONLY`, title = "INO80E-DMSO-P300_INO80_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-INO80_HA_ONLY`, title = "INO80E-DMSO-INO80_HA_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-INO80`, title = "INO80E-DMSO-INO80_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300`, title = "INO80E-DMSO-P300_ONLY")
+dev.off()
+```
+
+# make proportion barplot of P300 promoters by group
+```{r}
+bar.data <- data.frame("promoterPeaks" = rbind(
+  sum(bed.ann$`INO80E-DMSO-P300_INO80_HA`$annotation == "Promoter (<=1kb)"),
+  sum(bed.ann$`INO80E-DMSO-P300_INO80_ONLY`$annotation == "Promoter (<=1kb)"), 
+  sum(bed.ann$`INO80E-DMSO-P300`$annotation == "Promoter (<=1kb)")
+  ))
+rownames(bar.data) <- c("P300_INO80_HA", "P300_INO80", "P300")
+
+# convert to percent of total
+bar.data$promoterPeaks <- bar.data$promoterPeaks/sum(bar.data$promoterPeaks) * 100
+  
+col <- brewer.pal(3, "Dark2")
+pdf(file.path(plots.dir, "propBar_P300_promoters1k.pdf"), height = 8, width = 4)
+par(mar = c(2, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data), col = col, width = 0.6, ylab = "Percent")
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+```
+
+# for each of the groups, what changes occur w/CCS
+```{bash}
+module load bedtools/2.31.1
+
+bedtools intersect -wa -wb -a bed_files/INO80E-DMSO-INO80_peak_only.bed \
+  -b bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_common.bed \
+  bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond1.bed \
+  bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed \
+  -names NS UP DOWN > bed_files/INO80E-DMSO-INO80_peak_only_diff.bed
+  
+bedtools intersect -wa -wb -a bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect.bed \
+  -b bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_common.bed \
+  bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond1.bed \
+  bdgdiff/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed \
+  bdgdiff/INO80E-HA-CCSvsDMSO_c3.0_common.bed \
+  bdgdiff/INO80E-HA-CCSvsDMSO_c3.0_cond1.bed \
+  bdgdiff/INO80E-HA-CCSvsDMSO_c3.0_cond2.bed \
+  -names INO80_NS INO80_UP INO80_DOWN HA_NS HA_UP HA_DOWN \
+  > bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_intersect_diff.bed
+```
+
+
+
+# as duplication rate was generally low and variable across conditions, try peak
+# calling on full bam files and allow macs to determine maximum allowable tags
+```{bash}
+sbatch scripts/macs2autoDedup.sbatch INO80E-CCS-HA-R1-28_S28.sort.bam \
+  INO80E-CCS-HA-R2-29_S29.sort.bam INO80E-CCS-HA-R3-30_S31.sort.bam \
+  INO80E-CCS-Input-38_S39.sort.bam INO80E-CCS-HA_merged
+  
+sbatch scripts/macs2autoDedup.sbatch INO80E-CCS-INO80-R1-16_S15.sort.bam \
+  INO80E-CCS-INO80-R2-17_S16.sort.bam INO80E-CCS-INO80-R3-18_S17.sort.bam \
+  INO80E-CCS-Input-38_S39.sort.bam INO80E-CCS-INO80_merged
+
+sbatch scripts/macs2autoDedup.sbatch INO80E-CCS-P300-R1-4_S42.sort.bam \
+  INO80E-CCS-P300-R2-5_S43.sort.bam INO80E-CCS-P300-R3-6_S44.sort.bam \
+  INO80E-CCS-Input-38_S39.sort.bam INO80E-CCS-P300_merged
+
+
+sbatch scripts/macs2autoDedup.sbatch INO80E-DMSO-HA-R1-25_S25.sort.bam \
+  INO80E-DMSO-HA-R2-26_S26.sort.bam INO80E-DMSO-HA-R3-27_S27.sort.bam \
+  INO80E-DMSO-Input-37_S38.sort.bam INO80E-DMSO-HA_merged
+
+sbatch scripts/macs2autoDedup.sbatch INO80E-DMSO-INO80-R1-13_S12.sort.bam \
+  INO80E-DMSO-INO80-R2-14_S13.sort.bam INO80E-DMSO-INO80-R3-15_S14.sort.bam \
+  INO80E-DMSO-Input-37_S38.sort.bam INO80E-DMSO-INO80_merged
+
+sbatch scripts/macs2autoDedup.sbatch INO80E-DMSO-P300-R1-1_S19.sort.bam \
+  INO80E-DMSO-P300-R2-2_S30.sort.bam INO80E-DMSO-P300-R3-3_S41.sort.bam \
+  INO80E-DMSO-Input-37_S38.sort.bam INO80E-DMSO-P300_merged
+
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-CCS-HA-R1-34_S35.sort.bam \
+  UCHL5-CCS-HA-R2-25_S36.sort.bam UCHL5-CCS-HA-R3-36_S37.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-CCS-HA_merged
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-CCS-INO80-R1-22_S22.sort.bam \
+  UCHL5-CCS-INO80-R2-23_S23.sort.bam UCHL5-CCS-INO80-R3-24_S24.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-CCS-INO80_merged
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-CCS-P300-R1-10_S9.sort.bam \
+  UCHL5-CCS-P300-R2-11_S10.sort.bam UCHL5-CCS-P300-R3-12_S11.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-CCS-P300_merged
+
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-DMSO-HA-R1-31_S32.sort.bam \
+  UCHL5-DMSO-HA-R2-32_S33.sort.bam UCHL5-DMSO-HA-R3-33_S34.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-DMSO-HA_merged
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-DMSO-INO80-R1-19_S18.sort.bam \
+  UCHL5-DMSO-INO80-R2-20_S20.sort.bam UCHL5-DMSO-INO80-R3-21_S21.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-DMSO-INO80_merged
+
+sbatch scripts/macs2autoDedup.sbatch UCHL5-DMSO-P300-R1-7_S45.sort.bam \
+  UCHL5-DMSO-P300-R2-8_S46.sort.bam UCHL5-DMSO-P300-R3-9_S47.sort.bam \
+  UCHL5-DMSO-Input-39_S40.sort.bam UCHL5-DMSO-P300_merged
+```
+
+# repeat intersects w/new peak calls
+```{bash}
+module load bedtools/2.31.1
+
+wc -l macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak
+7772 macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak
+
+wc -l macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak
+19393 macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-INO80_merged_peaks.broadPeak | wc -l
+7770
+
+# since all INO80E-DMSO-HA peaks are in INO80, intersect former w/UCHL5-DMSO-INO80
+# to gauge overlap
+wc -l macs/broadpeaks_autoDedup/UCHL5-DMSO-INO80_merged_peaks.broadPeak
+15721 macs/broadpeaks_autoDedup/UCHL5-DMSO-INO80_merged_peaks.broadPeak
+
+wc -l macs/broadpeaks_autoDedup/UCHL5-DMSO-HA_merged_peaks.broadPeak
+19 macs/broadpeaks_autoDedup/UCHL5-DMSO-HA_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/UCHL5-DMSO-INO80_merged_peaks.broadPeak | wc -l
+7731
+
+bedtools intersect -wa -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/UCHL5-DMSO-HA_merged_peaks.broadPeak | wc -l
+9 
+
+# also look at overlap w/P300
+wc -l macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak
+24648 macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak
+
+bedtools intersect -wa -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak | wc -l
+6689
+
+bedtools intersect -wa -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks/INO80E-DMSO-P300_merged_peaks.broadPeak | wc -l
+14424
+```
+
+# re-do ananlysis with new peak calls
+# annotate peak calls and write out
+```{r}
+peaks.dir <- file.path(project.dir, "macs/broadpeaks_autoDedup")
+peak.files <- list.files(peaks.dir, pattern = "merged_peaks.broadPeak", full.names = TRUE)
+
+peak.ann <- list()
+for(peak.i in 1:length(peak.files)){
+  peak.file <- fread(peak.files[peak.i])
+  peak.gr <- with(peak.file, GRanges(V1, IRanges(start = V2, end = V3)))
+	seqlevelsStyle(peak.gr) <- "UCSC"
+	anno.peak <- annotatePeak(peak.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+	peak.ann[[peak.i]] <- as.data.frame(anno.peak)
+	
+	write.table(
+	  peak.ann[[peak.i]],
+	  file.path(res.dir, paste0(gsub(".broadPeak", "", basename(peak.files[[peak.i]])), "_autoDedup_ann.txt")),
+	  sep = "\t",
+	  col.names = TRUE,
+	  row.names = FALSE,
+	  quote = FALSE
+	)
+}
+names(peak.ann) <- gsub("_peaks.broadPeak", "", basename(peak.files))
+```
+
+# get diff peaks for each mark drug v dmso
+```{bash}
+dname=macs/broadpeaks_autoDedup
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-HA_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-HA_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-HA_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-HA_merged_control_lambda.bdg INO80E-HA-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-INO80_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-INO80_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-INO80_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-INO80_merged_control_lambda.bdg INO80E-INO80-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/INO80E-CCS-P300_merged_treat_pileup.bdg \
+  ${dname}/INO80E-CCS-P300_merged_control_lambda.bdg \
+  ${dname}/INO80E-DMSO-P300_merged_treat_pileup.bdg \
+  ${dname}/INO80E-DMSO-P300_merged_control_lambda.bdg INO80E-P300-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-HA_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-HA_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-HA_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-HA_merged_control_lambda.bdg UCHL5-HA-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-INO80_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-INO80_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-INO80_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-INO80_merged_control_lambda.bdg UCHL5-INO80-CCSvsDMSO
+
+sbatch scripts/bdgdiff.sbatch ${dname}/UCHL5-CCS-P300_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-CCS-P300_merged_control_lambda.bdg \
+  ${dname}/UCHL5-DMSO-P300_merged_treat_pileup.bdg \
+  ${dname}/UCHL5-DMSO-P300_merged_control_lambda.bdg UCHL5-P300-CCSvsDMSO
+```
+
+# nothing really up in any comparisons, just plot down peaks only for each mark
+```{bash}
+sbatch scripts/DTMatrix_P300_CCSvDMSOdown_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_INO80_CCSvDMSOdown_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_HA_CCSvDMSOdown_RPGCnorm.sbatch
+```
+
+# check overlap in peaks between cell lines (& proportion)
+```{bash}
+module load bedtools/2.31.1
+
+wc -l bdgdiff_autoDedup/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed
+8195 bdgdiff_autoDedup/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed
+wc -l bdgdiff_autoDedup/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed
+4816 bdgdiff_autoDedup/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed
+wc -l bdgdiff_autoDedup/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed
+131 bdgdiff_autoDedup/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed
+wc -l  bdgdiff_autoDedup/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed
+9789 bdgdiff_autoDedup/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed
+
+bedtools intersect -wa -a bdgdiff_autoDedup/INO80E-P300-CCSvsDMSO_c3.0_cond2.bed \
+  -b bdgdiff_autoDedup/UCHL5-P300-CCSvsDMSO_c3.0_cond2.bed | wc -l
+2733(/4816)
+  
+bedtools intersect -wa -a bdgdiff_autoDedup/UCHL5-INO80-CCSvsDMSO_c3.0_cond2.bed \
+  -b bdgdiff_autoDedup/INO80E-INO80-CCSvsDMSO_c3.0_cond2.bed | wc -l 
+90(/131)
+```
+
+# get bed file for each group in venn
+```{bash}
+module load bedtools/2.31.1
+
+# first get overlap of P300 & INO80
+bedtools intersect -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed
+14588 bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed
+  
+# now get INO80 NOT overlapping w/P300
+bedtools intersect -v -a macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-INO80_noP300_peak_autoDedup.bed
+  
+wc -l bed_files/INO80E-DMSO-INO80_noP300_peak_autoDedup.bed
+4805 bed_files/INO80E-DMSO-INO80_noP300_peak_autoDedup.bed
+
+# get INO80_noP300 NOT overlapping HA
+bedtools intersect -v -a bed_files/INO80E-DMSO-INO80_noP300_peak_autoDedup.bed \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-INO80_ONLY_peak_autoDedup.bed
+  
+wc -l bed_files/INO80E-DMSO-INO80_ONLY_peak_autoDedup.bed
+3956 bed_files/INO80E-DMSO-INO80_ONLY_peak_autoDedup.bed
+  
+# get INO80 & HA intersect
+bedtools intersect -u -a macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-INO80_HA_peak_autoDedup_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-INO80_HA_peak_autoDedup_intersect.bed
+7397 bed_files/INO80E-DMSO-INO80_HA_peak_autoDedup_intersect.bed
+
+# get HA NOT in INO80
+bedtools intersect -v -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-HA_noION80_peak_autoDedup_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-HA_noION80_peak_autoDedup_intersect.bed
+1 bed_files/INO80E-DMSO-HA_noION80_peak_autoDedup_intersect.bed
+
+# only 1 HA NOT in INO80, check if it intersects w/P300
+bedtools intersect -v -a bed_files/INO80E-DMSO-HA_noION80_peak_autoDedup_intersect.bed \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-HA_P300_ONLY_peak_autoDedup_only.bed
+  
+wc -l bed_files/INO80E-DMSO-HA_P300_ONLY_peak_autoDedup_only.bed
+0 bed_files/INO80E-DMSO-HA_P300_ONLY_peak_autoDedup_only.bed
+## not in P300 so it is 1 solo HA peak
+  
+# now get P300 NOT overlapping w/INO80
+bedtools intersect -v -a macs/broadpeaks_autoDedup/INO80E-DMSO-P300_merged_peaks.broadPeak \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-INO80_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_peak_autoDedup_only.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_peak_autoDedup_only.bed
+9058 bed_files/INO80E-DMSO-P300_peak_autoDedup_only.bed
+
+# get P300_INO80 intersect which also intersects w/HA
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect.bed
+6548 bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect.bed
+
+# get P300_INO80 intersect which does NOT intersect w/HA
+bedtools intersect -v -a bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed \
+  -b macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak > \
+  bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect.bed
+  
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect.bed
+8040 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect.bed
+
+# get HA  which does NOT intersect w/P300_INO80 intersect
+bedtools intersect -v -a macs/broadpeaks_autoDedup/INO80E-DMSO-HA_merged_peaks.broadPeak \
+  -b bed_files/INO80E-DMSO-P300_INO80_peak_autoDedup_intersect.bed > \
+  bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_autoDedup_intersect.bed
+
+wc -l bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_autoDedup_intersect.bed
+856 bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_autoDedup_intersect.bed
+```
+
+# remake w/venn based on these files as previous version was flawed
+```{r}
+fit <- euler(c("HA" = 1, "INO80" = 3956, "P300" = 9058, "HA&INO80" = 855, 
+               "INO80&P300" = 8040, "HA&INO80&P300" = 6548), shape = "ellipse")
+
+pdf(file.path(plots.dir, "venn_INO80E_peaks_autoDedup.pdf"))
+plot(fit, main = "INO80E peaks", Count = TRUE, quantities = TRUE)
+dev.off()
+```
+
+# annotate and classify regions for each group
+```{r}
+bed.files <- list.files("bed_files", pattern = "*autoDedup.*.bed", full.names = TRUE)
+
+bed.ann <- list()
+anno.peak <- list()
+for(bed.i in 1:length(bed.files)){
+  bed.file <- fread(bed.files[bed.i])
+  if(nrow(bed.file)  == 0){next}
+  bed.gr <- with(bed.file, GRanges(V1, IRanges(start = V2, end = V3)))
+	seqlevelsStyle(bed.gr) <- "UCSC"
+	anno.peak[[bed.i]] <- annotatePeak(bed.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+	bed.ann[[bed.i]] <- as.data.frame(anno.peak[[bed.i]])
+	
+	write.table(
+	  bed.ann[[bed.i]],
+	  file.path(res.dir, gsub(".bed", "_ann.txt", basename(bed.files[[bed.i]]))),
+	  sep = "\t",
+	  col.names = TRUE,
+	  row.names = FALSE,
+	  quote = FALSE
+	)
+}
+names(bed.ann) <- gsub("_peak_.*.bed", "", basename(bed.files))
+names(anno.peak) <- gsub("_peak_.*.bed", "", basename(bed.files))
+
+pdf(file.path(plots.dir, "annoBar_venn_groups_autoDedup.pdf"), 
+	  height = 4, width = 8)
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300_INO80_HA`, title = "INO80E-DMSO-P300_INO80_HA")
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300_INO80_ONLY`, title = "INO80E-DMSO-P300_INO80_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-INO80_HA_ONLY`, title = "INO80E-DMSO-INO80_HA_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-INO80`, title = "INO80E-DMSO-INO80_ONLY")
+plotAnnoBar(anno.peak$`INO80E-DMSO-P300`, title = "INO80E-DMSO-P300_ONLY")
+dev.off()
+```
+
+# make proportion barplot of P300 promoters by group
+```{r}
+bar.data <- data.frame("promoterPeaks" = rbind(
+  sum(bed.ann$`INO80E-DMSO-P300_INO80_HA`$annotation == "Promoter (<=1kb)"),
+  sum(bed.ann$`INO80E-DMSO-P300_INO80_ONLY`$annotation == "Promoter (<=1kb)"), 
+  sum(bed.ann$`INO80E-DMSO-P300`$annotation == "Promoter (<=1kb)")
+  ))
+rownames(bar.data) <- c("P300_INO80_HA", "P300_INO80", "P300")
+
+# convert to percent of total
+bar.data$promoterPeaks <- bar.data$promoterPeaks/sum(bar.data$promoterPeaks) * 100
+  
+col <- brewer.pal(3, "Dark2")
+pdf(file.path(plots.dir, "propBar_P300_promoters1k_autoDedup.pdf"), height = 8, width = 4)
+par(mar = c(2, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data), col = col, width = 0.6, ylab = "Percent")
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+```
+
+# add chr to bed files for homer
+```{r}
+sub.beds <- list.files("bed_files", pattern = "*autoDedup.*.bed", full.names = TRUE)
+
+for(sub.bed in sub.beds){
+  sub.file <- fread(sub.bed)
+  sub.file$V1 <- paste0("chr", sub.file$V1)
+  write.table(
+    sub.file,
+    gsub(".bed", "_homer.bed", sub.bed),
+    sep = "\t",
+    col.names = FALSE,
+    row.names = FALSE,
+    quote = FALSE
+  )
+}
+```
+
+# motif enrichment of each of the 5 subsets from venn
+```{bash}
+mkdir homer
+
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed INO80E-DMSO-P300_INO80_HA_autoDedup
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed INO80E-DMSO-P300_INO80_only_autoDedup
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-INO80_peak_autoDedup_only_homer.bed INO80E-DMSO-INO80_only_autoDedup
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed INO80E-DMSO-P300_only_autoDedup
+sbatch scripts/homer.sbatch bed_files/INO80E-DMSO-INO80_HA_ONLY_peak_autoDedup_intersect_homer.bed INO80E-DMSO-INO80_HA_only_autoDedup
+```
+
+# trying again with peak calling of HA samples, use predictd to set frag length 
+# & override model building
+```{bash}
+module load macs/2.2.7.1
+
+mkdir broadpeaks_noModel
+
+macs2 predictd -i alignment/INO80E-DMSO-HA-R1-25_S25.sort.bam alignment/INO80E-DMSO-HA-R2-26_S26.sort.bam alignment/INO80E-DMSO-HA-R3-27_S27.sort.bam -g hs
+INFO  @ Wed, 13 Nov 2024 12:16:59: # predicted fragment length is 228 bps 
+INFO  @ Wed, 13 Nov 2024 12:16:59: # alternative fragment length(s) may be 228 bps 
+
+macs2 callpeak -t alignment/INO80E-DMSO-HA-R1-25_S25.sort.rmdup.bam \
+  alignment/INO80E-DMSO-HA-R2-26_S26.sort.rmdup.bam \
+  alignment/INO80E-DMSO-HA-R3-27_S27.sort.rmdup.bam \
+  -c alignment/INO80E-DMSO-Input-37_S38.sort.rmdup.bam \
+  --broad -g hs -n INO80E-DMSO-HA_merged --outdir macs/broadpeaks_noModel \
+  -B --nomodel --extsize 228
+  
+wc -l  macs/broadpeaks_noModel/INO80E-DMSO-HA_merged_peaks.broadPeak
+6253 macs/broadpeaks_noModel/INO80E-DMSO-HA_merged_peaks.broadPeak
+```
+### number of peaks similar, but actually less, so this won't be helpful either
+
+# do a bdgcmp of these to get log fold enrichment to use this as a threshold
+```{bash}
+mkdir bdgcmp
+
+for tbdg in macs/broadpeaks_autoDedup/*_merged_treat_pileup.bdg
+do
+bname=`basename $tbdg _merged_treat_pileup.bdg`
+sbatch scripts/macs2bdgcmp.sbatch $tbdg macs/broadpeaks_autoDedup/${bname}_merged_control_lambda.bdg $bname
+done
+
+# check how many have LFE > 2
+awk '$4 >= 2' bdgcmp/INO80E-DMSO-HA_logFE.bdg | wc -l
+0
+```
+
+# try scaling up input to larger HA samples rather than reverse
+```{bash}
+module load macs/2.2.7.1
+
+mkdir -p macs/broadpeaks_scaleUp
+
+macs2 callpeak -t alignment/INO80E-DMSO-HA-R1-25_S25.sort.bam \
+  alignment/INO80E-DMSO-HA-R2-26_S26.sort.bam \
+  alignment/INO80E-DMSO-HA-R3-27_S27.sort.bam \
+  -c alignment/INO80E-DMSO-Input-37_S38.sort.bam \
+  --broad -g hs -n INO80E-DMSO-HA_merged --outdir macs/broadpeaks_scaleUp \
+  -B --scale-to large --keep-dup auto 
+  
+wc -l macs/broadpeaks_scaleUp/INO80E-DMSO-HA_merged_peaks.broadPeak
+49844 macs/broadpeaks_scaleUp/INO80E-DMSO-HA_merged_peaks.broadPeak
+```
+
+# make profile plots for each venn group
+```{bash}
+sbatch scripts/DTMatrix_INO80E_vennGroups_allMarks_RPGCnorm.sbatch 
+
+# now each mark separately
+sbatch scripts/DTMatrix_INO80E_vennGroups_INO80_RPGCnorm.sbatch 
+sbatch scripts/DTMatrix_INO80E_vennGroups_P300_RPGCnorm.sbatch 
+sbatch scripts/DTMatrix_INO80E_vennGroups_HA_RPGCnorm.sbatch 
+```
+
+# make plots of homer results
+```{r}
+homer.dirs <- list.dirs(file.path(project.dir, "homer"), recursive = FALSE)
+# only need to look at autoDedup results
+homer.dirs <- homer.dirs[grepl("autoDedup", homer.dirs)]
+
+for(homer.dir in homer.dirs){
+  homer.file <- fread(file.path(homer.dir, "knownResults.txt"))
+  homer.file$negLogPvalue <- -(homer.file$`Log P-value`)
+  homer.file$enrichmentRatio <- as.numeric(gsub("%", "", homer.file$`% of Target Sequences with Motif`))/as.numeric(gsub("%", "", homer.file$`% of Background Sequences with Motif`))
+  homer.file$simpMotifName <- gsub("/.*", "", homer.file$`Motif Name`)
+  homer.file$significant <- homer.file$`q-value (Benjamini)` < 0.05
+  homer.file$rank <- seq(1:nrow(homer.file))
+  pdf(file.path(plots.dir, paste0("scatter_motifEnrich_", basename(homer.dir), ".pdf")))
+  ggplot(homer.file, aes(x = enrichmentRatio, y = negLogPvalue, color = significant)) +
+    geom_point() +
+    scale_color_manual(values=c("black","red3")) +
+    geom_label_repel(
+      aes(label = ifelse(rank <= 10, simpMotifName, "")), 
+      max.overlaps = 500, 
+      size = 4, 
+      point.padding = 0.5, 
+      box.padding = 0.15
+      ) +
+    labs(title = basename(homer.dir)) +
+    theme_minimal()
+  dev.off()
+}
+```
+
+# make proportion barplot of P300 enhancers by group as for promoters using 
+# external data for enhancer calls
+# first get intersect of each group w/enhancers and count
+```{bash}
+module load bedtools/2.31.1
+
+# use homer version of bed files as these have chr to match enhancer file
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks.bed > \
+  bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers.bed  
+6350 bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed
+6548 bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed
+> 6350/6548
+[1] 0.9697618 # prop enhancers
+
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks.bed > \
+  bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers.bed
+7135 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed
+8040 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed
+> 7135/8040
+[1] 0.8874378 # prop enhancers
+
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks.bed > \
+  bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers.bed
+wc -l bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers.bed
+4459 bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers.bed 
+wc -l bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed
+9058 bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed
+> 4459/9058
+[1] 0.492272 # prop enhancers
+```
+
+# make this data into bar plot as for promoters
+```{r}
+bar.data$enhancerPeaks <- rbind(6350, 7135, 4459)
+
+# convert to percent of total
+bar.data$enhancerPeaks <- bar.data$enhancerPeaks/sum(bar.data$enhancerPeaks) * 100
+  
+col <- brewer.pal(3, "Dark2")
+pdf(file.path(plots.dir, "propBar_P300_enhancers.pdf"), height = 8, width = 4)
+par(mar = c(2, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data$enhancerPeaks), col = col, width = 0.6, ylab = "Percent")
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+
+# and both together
+pdf(file.path(plots.dir, "propBar_P300_enhancers_promoters.pdf"), height = 8, width = 4)
+par(mar = c(7, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data), col = col, width = 0.6, ylab = "Percent", las = 3)
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+```
+
+# redo analysis above limiting to promoter distal enhancers
+```{bash}
+module load bedtools/2.31.1
+
+# use homer version of bed files as these have chr to match enhancer file
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks_promDistal.bed > \
+  bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers_promDistal.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers_promDistal.bed
+1005 bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_enhancers_promDistal.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed
+6548 bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_homer.bed
+> 1005/6548
+[1] 0.153482 # prop enhancers
+
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks_promDistal.bed > \
+  bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers_promDistal.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers_promDistal.bed
+3623 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_enhancers_promDistal.bed
+wc -l bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed
+8040 bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_homer.bed
+> 3623/8040
+[1] 0.4506219 # prop enhancers
+
+bedtools intersect -u -a bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed \
+  -b /dawson_genomics/Projects/CCS1477/GEO_PRJNA854916/bed_files/consensus_DMSO_ATACseq_ChIPseq_peaks_promDistal.bed > \
+  bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers_promDistal.bed
+wc -l bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers_promDistal.bed
+3514 bed_files/INO80E-DMSO-P300_peak_autoDedup_enhancers_promDistal.bed 
+wc -l bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed
+9058 bed_files/INO80E-DMSO-P300_peak_autoDedup_only_homer.bed
+> 3514/9058
+[1] 0.3879444 # prop enhancers
+```
+
+# make this data into bar plot as for promoters
+```{r}
+bar.data$enhancerPeaks <- rbind(1005, 3623, 3514)
+
+# convert to percent of total
+bar.data$enhancerPeaks <- bar.data$enhancerPeaks/sum(bar.data$enhancerPeaks) * 100
+  
+col <- brewer.pal(3, "Dark2")
+pdf(file.path(plots.dir, "propBar_P300_enhancers.pdf"), height = 8, width = 4)
+par(mar = c(2, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data$enhancerPeaks), col = col, width = 0.6, ylab = "Percent")
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+
+# and both together
+pdf(file.path(plots.dir, "propBar_P300_enhancers_promoters.pdf"), height = 8, width = 4)
+par(mar = c(7, 4, 2, 10), xpd = TRUE)
+barplot(as.matrix(bar.data), col = col, width = 0.6, ylab = "Percent", las = 3)
+legend("topright", inset = c(-1.5, 0), legend = rownames(bar.data), fill = col, title = "Group")
+dev.off()
+```
+
+# make ann bar plots for peaks lost in CCSvDMSO
+```{r}
+down.files <- list.files("bdgdiff_autoDedup", pattern = "*cond2.bed", full.names = TRUE)
+
+down.ann <- list()
+down.peak <- list()
+for(bed.i in 1:length(down.files)){
+  down.file <- fread(down.files[bed.i], skip = 1)
+  if(nrow(down.file)  == 0){next}
+  bed.gr <- with(down.file, GRanges(V1, IRanges(start = V2, end = V3)))
+	seqlevelsStyle(bed.gr) <- "UCSC"
+	down.peak[[bed.i]] <- annotatePeak(bed.gr, TxDb = txdb, annoDb = "org.Hs.eg.db")
+	down.ann[[bed.i]] <- as.data.frame(down.peak[[bed.i]])
+	
+	write.table(
+	  down.ann[[bed.i]],
+	  file.path(res.dir, gsub(".bed", "_ann.txt", basename(down.files[[bed.i]]))),
+	  sep = "\t",
+	  col.names = TRUE,
+	  row.names = FALSE,
+	  quote = FALSE
+	)
+}
+names(down.ann) <- gsub("_c3.0_cond2.bed", "", basename(down.files))
+names(down.peak) <- gsub("_c3.0_cond2.bed", "", basename(down.files))
+
+pdf(file.path(plots.dir, "annoBar_INO80E-P300-CCSvsDMSO_down.pdf"), 
+	  height = 4, width = 8)
+plotAnnoBar(down.peak$`INO80E-P300-CCSvsDMSO`, title = "INO80E-P300-CCSvsDMSO_DOWN")
+dev.off()
+
+pdf(file.path(plots.dir, "annoBar_INO80E-INO80-CCSvsDMSO_down.pdf"), 
+	  height = 4, width = 8)
+plotAnnoBar(down.peak$`INO80E-INO80-CCSvsDMSO`, title = "INO80E-INO80-CCSvsDMSO_DOWN")
+dev.off()
+```
+
+# make heatmaps of P300 & INO80 at peaks which are lost with treatment
+```{bash}
+sbatch scripts/DTMatrix_INO80E_downP300_INO80_RPGCnorm.sbatch
+sbatch scripts/DTMatrix_UCHL5_downP300_INO80_RPGCnorm.sbatch
+```
+
+# make heatmaps for enhancers and promoters from bar plots by group for the 3 marks
+# need to write out bed files for promoters
+```{r}
+# get peakset annotation and subset to promoters
+pih.bed <- fread("results/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_intersect_ann.txt")
+pih.prom.bed <- pih.bed[which(pih.bed$annotation == "Promoter (<=1kb)"), ]
+# write out promoter bed file
+write.table(
+  pih.prom.bed,
+  file.path(project.dir, "bed_files/INO80E-DMSO-P300_INO80_HA_peak_autoDedup_promoters.bed"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# get peakset annotation and subset to promoters
+pionly.bed <- fread("results/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_intersect_ann.txt")
+pionly.prom.bed <- pionly.bed[which(pionly.bed$annotation == "Promoter (<=1kb)"), ]
+# write out promoter bed file
+write.table(
+  pionly.prom.bed,
+  file.path(project.dir, "bed_files/INO80E-DMSO-P300_INO80_ONLY_peak_autoDedup_promoters.bed"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# get peakset annotation and subset to promoters
+p300.bed <- fread("results/INO80E-DMSO-P300_peak_autoDedup_only_ann.txt")
+p300.prom.bed <- p300.bed[which(p300.bed$annotation == "Promoter (<=1kb)"), ]
+# write out promoter bed file
+write.table(
+  p300.prom.bed,
+  file.path(project.dir, "bed_files/INO80E-DMSO-P300_peak_autoDedup_promoters.bed"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+```{bash}
+sbatch scripts/DTMatrix_3marks_3barplotlists_enhancers.sbatch
+sbatch scripts/DTMatrix_3marks_3barplotlists_promoters.sbatch
+```
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_ChIP_241008.txt"))
+)
+```
