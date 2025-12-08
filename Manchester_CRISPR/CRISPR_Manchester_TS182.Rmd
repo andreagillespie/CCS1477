@@ -1,0 +1,157 @@
+---
+title: "CRISPR_Manchester_TS182"
+author: "Andrea"
+date: '2024-05-01'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+fastq dir: /dawson_genomics/Projects/CCS1477/Manchester_CRISPR/Unaligned_TS182/fastqs
+project dir: /dawson_genomics/Projects/CCS1477/Manchester_CRISPR/Unaligned_TS182
+
+# cat separate lanes together first, then fastqc
+```{bash}
+mkdir fastqc
+mkdir scripts
+mkdir logs
+mkdir trimmed_fastqs
+mkdir alignment
+mkdir mapped_guides
+mkdir guide_counts
+
+for fq in /dawson_genomics/Projects/CCS1477/Manchester_CRISPR/Unaligned_TS182/fastqs/*_R1_001.fastq.gz
+do
+bname=`basename $fq R1_001.fastq.gz`
+dname=`dirname $fq`
+sbatch scripts/MapCRISPR.sbatch $fq ${dname}/${bname}R2_001.fastq.gz
+done
+
+module load multiqc/1.8
+multiqc .
+```
+
+# load libraries and set paths
+```{r}
+library(data.table)
+library(limma)
+
+project.dir <- "/dawson_genomics/Projects/CCS1477/Manchester_CRISPR/Unaligned_TS182"
+counts.dir <- file.path(project.dir, "guide_counts")
+```
+
+# combine guide counts into a counts table
+```{r}
+gc.files <- list.files(counts.dir)
+all.counts <- fread(file.path(counts.dir, gc.files[1]), skip = 1)
+colnames(all.counts) <- c(gc.files[1], "sgRNA")
+for(gc in gc.files[-1]){
+  counts <- fread(file.path(counts.dir, gc), skip = 1)
+  colnames(counts) <- c(gc, "sgRNA")
+  all.counts <- merge(all.counts, counts, by = "sgRNA", all = TRUE)
+}
+colnames(all.counts) <- gsub(".guideCounts.txt", "", colnames(all.counts))
+
+# annotate with gene names and order for mageck format
+hg.ann <- fread("/data/reference/dawson_labs/biomart_annotations/Hsapiens/ensembl_hgnc_entrez.txt")
+sg.split <- strsplit2(all.counts$sgRNA, "_")
+all.counts$ensg <- sg.split[, 2]
+all.counts <- merge(all.counts, hg.ann, by.x = "ensg", by.y = "ensembl_gene_id", all.x = TRUE)
+all.counts <- all.counts[, c(2, 10, 3:9)]
+colnames(all.counts)[2] <- "gene"
+
+# clear up any issues or formatting that are problematic for mageck
+# change any NAs to 0 counts 
+all.counts[is.na(all.counts)] <- 0
+all.counts$gene[which(all.counts$gene == 0)] <- "0None"
+# if no gene name use ensembl ID
+nogene <- which(all.counts$gene == "")
+all.counts$gene[nogene] <- strsplit2(all.counts$sgRNA, "_")[nogene, 2]
+# remove duplicates
+all.counts <- all.counts[-(which(duplicated(all.counts))),]
+
+write.table(
+  all.counts,
+  file.path(counts.dir, "all_guideCounts.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+# run mageck test for desired comparisons
+```{bash}
+mkdir mageck_counts
+
+module purge
+module load mageck/0.5.9
+module load scipy/0.17.0
+module load R/4.2.0
+
+mageck test -k guide_counts/all_guideCounts.txt -t TS182_06_25nm_D20_S6 -c TS182_05_DMSO_D20_S5 -n mageck_counts/THP_D20_25nm_vs_DMSO --pdf-report --keep-tmp
+mageck test -k guide_counts/all_guideCounts.txt -t TS182_07_100nm_D20_S7 -c TS182_05_DMSO_D20_S5 -n mageck_counts/THP_D20_100nm_vs_DMSO --pdf-report --keep-tmp
+```
+
+# for genes of interest extract best performing guide from each experiment
+```{r}
+mag.dir <- file.path(project.dir, "mageck_counts")
+
+comps <- c("OPM2_D20_12_5nm_vs_DMSO", "OPM2_D20_50nm_vs_DMSO", "OCI-AML3_D20_25nm_vs_DMSO", "OCI-AML3_D20_100nm_vs_DMSO", "MV411_D20_25nm_vs_DMSO", "MV411_D20_100nm_vs_DMSO")
+gois <- c("HDAC3", "TBL1XR1", "INO80", "INO80D", "INO80E", "TFPT", "UCHL5", "NFRKB", "EP300", "CREBBP")
+
+top.sg <- NULL
+for(comp.i in 1:length(comps)){
+  sg.table <- fread(file.path(mag.dir, paste0(comps[comp.i], ".sgrna_summary.txt")))
+  for(goi in gois){
+    sg.sub <- subset(sg.table, Gene == goi)
+    sg.top <- sg.sub[which(abs(sg.sub$LFC) == max(abs(sg.sub$LFC))),]
+    top.sg <- rbind(top.sg, sg.top)
+  }
+}
+
+write.table(
+  top.sg,
+  file.path(mag.dir, "gois_top_sgrna_stats.txt"),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# for each gene, 2 sgrnas that were most commonly top across experiments selected, tie decided by stats
+# loop through these to get sequence from fasta
+sgs <- c("CREBBP_ENSG00000005339_155106.1", "CREBBP_ENSG00000005339_155109.4", "EP300_ENSG00000100393_58058.3", "EP300_ENSG00000100393_58061.6", "HDAC3_ENSG00000171720_161760.1", "HDAC3_ENSG00000171720_161762.3", "INO80_ENSG00000128908_53868.1", "INO80_ENSG00000128908_53869.2", "INO80D_ENSG00000114933_130266.4", "INO80D_ENSG00000114933_130267.5", "INO80E_ENSG00000169592_10316.4", "INO80E_ENSG00000169592_10314.2", "NFRKB_ENSG00000170322_181377.3","NFRKB_ENSG00000170322_181380.6", "TBL1XR1_ENSG00000177565_2560.5", "TBL1XR1_ENSG00000177565_2559.4", "TFPT_ENSG00000105619_4661.6", "TFPT_ENSG00000105619_4660.5", "UCHL5_ENSG00000116750_59131.6", "UCHL5_ENSG00000116750_59127.2")
+sg.fa <- fread("/data/reference/dawson_labs/CRISPR/HgChromatin_and_TF_Pool/HgChromatin_and_TF_Pool.fa", header = FALSE)
+
+sg.seqs <- NULL  
+for(sg in sgs){
+  sg.x <- grep(sg, t(sg.fa))
+  sg.seq <- cbind(sg.fa[sg.x], sg.fa[sg.x+1])
+  sg.seqs <- rbind(sg.seqs, sg.seq)
+}
+
+sg.seqs$V1 <- gsub(">", "", sg.seqs$V1)
+write.table(
+  sg.seqs,
+  file.path(mag.dir, "top_guides_sequences.txt"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_CRISRP_240328.txt"))
+)
+```
