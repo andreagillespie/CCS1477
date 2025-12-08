@@ -1,0 +1,466 @@
+---
+title: "1_processing.Rmd"
+author: "Andrea"
+date: "2024-06-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+fastq dir: /pipeline/Runs/NextSeq/240521_VH01624_101_AACJ7K3HV/ProjectFolders/Project_Xin-Liu/Sample_OS-7002-Plate/
+project dir: /dawson_genomics/Projects/CCS1477/MACseq_240521
+
+# init R env
+```{r}
+library(Matrix)
+library(readr)
+library(data.table)
+library(edgeR)
+library(tidyverse)
+library(RColorBrewer)
+```
+
+# set paths
+```{r}
+project.dir <- "/dawson_genomics/Projects/CCS1477/MACseq_240521"
+ref.dir <- file.path(project.dir, "reference_files")
+align.dir <- file.path(project.dir, "alignment")
+res.dir <- file.path(project.dir, "results")
+plots.dir <- file.path(project.dir, "plots")
+```
+
+# make barcode whitelist from metadata file
+```{r}
+# get sample info & add group to annotate
+sample.info <- read.csv(file.path(ref.dir, "MGC-OS-7002_metadata.csv"), header = T, row.names = 1)
+# make group w/o rep
+sample.info$Group <- gsub("_[1-3]$", "", sample.info$Sample_Name)
+# sample 6 & 7 were incorrectly annotated per Ollie, so fix these to match sample name
+sample.info$KO[6:7] <- c("INO80E", "INO80")
+sample.info$Repeat[6:7] <- c(1, 3)
+
+# write out barcodes for alignment
+write.table(
+  sample.info$Barcode,
+  file.path(ref.dir, "VCFG_metadata_barcode_whitelist.txt"),
+  sep = "\t",
+  col.names = FALSE,
+  row.names = FALSE,
+  quote = FALSE
+  )
+```
+
+
+# align w/STAR solo, processing scripts adapted from Dane's MACseq analysis
+```{bash}
+mkdir alignment
+mkdir logs
+
+# first need to build Hg38 genome for most recent version of star on the cluster
+sbatch scripts/STARindex.sbatch
+
+sbatch scripts/MACseq_align.sbatch
+```
+
+# load into edger
+```{r}
+# import matrix
+mtx <- readMM(file.path(align.dir, "Plate_S2_Solo.out/Gene/raw/matrix.mtx"))
+# rows are genes
+rownames(mtx) <- read_tsv(
+  file.path(align.dir, "Plate_S2_Solo.out/Gene/raw/features.tsv"), 
+  col_names = FALSE
+  )[, 1, drop = TRUE] # gene symbol is in  column 2, column 1 is ENSEMBLID
+# colums are barcodes
+colnames(mtx) <- read_tsv(
+  file.path(align.dir, "Plate_S2_Solo.out/Gene/raw/barcodes.tsv"), 
+  col_names = FALSE
+  )[, 1, drop = TRUE]
+
+# order sample info by matrix barcode order
+rownames(sample.info) <- sample.info$Barcode
+sample.info <- sample.info[colnames(mtx), ]
+
+dge <- DGEList(
+  counts = mtx, 
+  samples = sample.info, 
+  group = sample.info$Group, 
+  genes = read_tsv(
+    file.path(align.dir, "Plate_S2_Solo.out/Gene/raw/features.tsv"), 
+    col_names = c("ENSEMBL", "Symbol")
+    )[, c(2, 1), drop = FALSE], 
+  remove.zeros = FALSE
+  )
+```
+
+# filter out lowly expressed genes
+```{r}
+dim(dge)
+keep <- filterByExpr(dge, group = dge$samples$Group)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+dim(dge)
+```
+
+# Plot count numbers
+```{r}
+# Setting colours, getting all qual palettes and taking 50
+col.group <- dge$samples$group
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+levels(col.group) <- sample(col_vector, 50)
+col.group <- as.character(col.group)
+
+pdf(file = file.path(plots.dir, "barplotReadsPerSample.pdf"), width = 8, height = 4)
+barplot(
+  colSums(dge$counts), 
+  las = 2, 
+  main = "total reads", 
+  names.arg = dge$samples$Sample_Name,
+  col = col.group,
+  cex.names = 0.2
+)
+dev.off()
+```
+
+# remove 2 reps w/ < 400000 reads
+```{r}
+dge <- dge[, -which(colSums(dge$counts) < 400000)]
+```
+
+# unnorm MDS plots
+```{r}
+pdf(file.path(plots.dir, "MDS_unnorm_counts_group.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by group",
+  col = col.group
+  )
+dev.off()
+
+# 3 clear clusters, label with different variable to find what is driving clustering
+col.cells <- as.factor(dge$samples$Cell_line)
+levels(col.cells) <- brewer.pal(nlevels(col.cells), "Dark2") 
+col.cells <- as.character(col.cells)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_cellLine.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by cell line",
+  col = col.cells
+  )
+dev.off()
+
+col.ko <- as.factor(dge$samples$KO)
+levels(col.ko) <- brewer.pal(nlevels(col.ko), "Dark2") 
+col.ko <- as.character(col.ko)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_KO.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by KO",
+  col = col.ko
+  )
+dev.off()
+
+col.cond <- as.factor(dge$samples$Condition)
+levels(col.cond) <- brewer.pal(nlevels(col.cond), "Dark2") 
+col.cond <- as.character(col.cond)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_condition.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by condition",
+  col = col.cond
+  )
+dev.off()
+
+col.time <- as.factor(dge$samples$Timepoint)
+levels(col.time) <- brewer.pal(nlevels(col.time), "Dark2") 
+col.time <- as.character(col.time)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_timepoint.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by timepoint",
+  col = col.time
+  )
+dev.off()
+
+col.rep <- as.factor(dge$samples$Repeat)
+levels(col.rep) <- brewer.pal(nlevels(col.rep), "Dark2") 
+col.rep <- as.character(col.rep)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_rep.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by replicate",
+  col = col.rep
+  )
+dev.off()
+
+col.row <- as.factor(dge$samples$Row)
+levels(col.row) <- brewer.pal(nlevels(col.row), "Dark2") 
+col.row <- as.character(col.row)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_row.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by row",
+  col = col.row
+  )
+dev.off()
+
+col.col <- as.factor(dge$samples$Column)
+levels(col.col) <- sample(col_vector, nlevels(col.col))
+col.col <- as.character(col.col)
+
+pdf(file.path(plots.dir, "MDS_unnorm_counts_column.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "unnormalised counts by column",
+  col = col.col
+  )
+dev.off()
+```
+
+# TMM normalise
+```{r}
+dge <- calcNormFactors(dge, method = "TMM")
+```
+
+# MDS for normalised data
+```{r}
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_group.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by group",
+  col = col.group
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_cellLine.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by cell line",
+  col = col.cells
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_KO.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by KO",
+  col = col.ko
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_condition.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by condition",
+  col = col.cond
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_timepoint.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by timepoint",
+  col = col.time
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_rep.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by replicate",
+  col = col.rep
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_row.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by row",
+  col = col.row
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_TMMnorm_counts_column.pdf"))
+plotMDS(
+  dge,
+  pch = 16,
+  main = "TMMnormalised counts by column",
+  col = col.col
+  )
+dev.off()
+```
+
+# more MDS plots trying to suss out differences btw clusters
+```{r}
+# add ann for KOvSAFE & CCSvNONE
+dge$samples$isKO <- ifelse(dge$samples$KO == "Safe", "Safe", "KO")
+dge$samples$drug <- ifelse(dge$samples$Condition == "CCS", "CCS", "None")
+# make simplified group of new cols + timepoint
+dge$samples$simpGroup <- paste(dge$samples$isKO, dge$samples$drug, dge$samples$Timepoint, sep = "_")
+
+col.simp <- as.factor(dge$samples$simpGroup)
+levels(col.simp) <- brewer.pal(nlevels(col.simp), "Paired") 
+col.simp <- as.character(col.simp)
+
+mv411 <- which(dge$samples$Cell_line == "MV411")
+
+# start w/MV411 only
+pdf(file.path(plots.dir, "MDS_MV411_TMMnorm_counts_simplifiedGroup.pdf"))
+plotMDS(
+  dge[, mv411],
+#  pch = 16,
+  labels = dge$samples$simpGroup[mv411],
+  main = "MV411 TMMnormalised counts by simplified groups",
+  col = col.simp[mv411]
+  )
+dev.off()
+
+# now OPM2 only
+pdf(file.path(plots.dir, "MDS_OPM2_TMMnorm_counts_simplifiedGroup.pdf"))
+plotMDS(
+  dge[, -mv411],
+#  pch = 16,
+  labels = dge$samples$simpGroup[-mv411],
+  main = "OPM2 TMMnormalised counts by simplified groups",
+  col = col.simp[-mv411]
+  )
+dev.off()
+```
+
+# try plotting safe untreated (controls) only to see if clustering is similar
+```{r}
+ctrl <- which(dge$samples$isKO == "Safe" & dge$samples$drug == "None")
+col.simp = as.numeric(factor(dge$samples$simpGroup)) + 1
+  
+pdf(file.path(plots.dir, "MDS_control_TMMnorm_counts_simplifiedGroup.pdf"))
+plotMDS(
+  dge[, ctrl],
+#  pch = 16,
+  labels = dge$samples$group[ctrl],
+  main = "control TMMnormalised counts by simplified groups",
+  col = col.simp[ctrl]
+  )
+dev.off()
+```
+
+# cell line is clearly largest contributor to clustering, keep these separate 
+# and make new plots for each condition
+```{r}
+pdf(file.path(plots.dir, "MDS_MV411_TMMnorm_counts_KO.pdf"))
+plotMDS(
+  dge[, mv411],
+  labels = dge$samples$Group[mv411],
+  main = "MV411 TMMnormalised counts by KO",
+  col = col.ko[mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_OPM2_TMMnorm_counts_KO.pdf"))
+plotMDS(
+  dge[, -mv411],
+  labels = dge$samples$Group[-mv411],
+  main = "OPM2 TMMnormalised counts by KO",
+  col = col.ko[-mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_MV411_TMMnorm_counts_condition.pdf"))
+plotMDS(
+  dge[, mv411],
+  labels = dge$samples$Group[mv411],
+  main = "MV411 TMMnormalised counts by condition",
+  col = col.cond[mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_OPM2_TMMnorm_counts_condition.pdf"))
+plotMDS(
+  dge[, -mv411],
+  labels = dge$samples$Group[-mv411],
+  main = "OPM2 TMMnormalised counts by condition",
+  col = col.cond[-mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_MV411_TMMnorm_counts_timepoint.pdf"))
+plotMDS(
+  dge[, mv411],
+#  labels = dge$samples$Group[mv411],
+  pch = 1,
+  main = "MV411 TMMnormalised counts by timepoint",
+  col = col.time[mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_OPM2_TMMnorm_counts_timepoint.pdf"))
+plotMDS(
+  dge[, -mv411],
+#  labels = dge$samples$Group[-mv411],
+  pch = 1,
+  main = "OPM2 TMMnormalised counts by timepoint",
+  col = col.time[-mv411]
+  )
+dev.off()
+```
+
+### cells are MOLM13 not MV411 as in sample names
+# treatment and time are the first 2 dimensions, respectively, so make ann for 
+# just these and plot on MDS
+```{r}
+dge$samples$tx_time <- paste(dge$samples$drug, dge$samples$Timepoint, sep = "_")
+
+col.txtime = as.numeric(factor(dge$samples$tx_time)) + 1
+
+pdf(file.path(plots.dir, "MDS_MOLM13_TMMnorm_counts_txTime.pdf"))
+plotMDS(
+  dge[, mv411],
+#  labels = dge$samples$Group[mv411],
+  pch = 1,
+  main = "MOLM13 TMMnormalised counts by treatment & time",
+  col = col.txtime[mv411]
+  )
+dev.off()
+
+pdf(file.path(plots.dir, "MDS_OPM2_TMMnorm_counts_txTime.pdf"))
+plotMDS(
+  dge[, -mv411],
+#  labels = dge$samples$Group[-mv411],
+  pch = 1,
+  main = "OPM2 TMMnormalised counts by treatment & time",
+  col = col.txtime[-mv411]
+  )
+dev.off()
+```
+
+
+# save session info
+```{r}
+sesh.info <- capture.output(sessionInfo())
+writeLines(
+  sesh.info,
+  file.path(project.dir, "session-info", paste0(Sys.Date(), "_MACseq_240521.txt"))
+)
+```
